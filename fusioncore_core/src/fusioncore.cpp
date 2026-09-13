@@ -1729,7 +1729,12 @@ bool FusionCore::apply_gnss_update(
   // Several in a row, not one. One fix landing near a drifted estimate proves
   // nothing, so the outage stays latched until the receiver has demonstrably
   // come back (see post_outage_unconfirmed_).
-  if (++gnss_consecutive_accepts_ >= kAcceptsToConfirmReacquisition)
+  // Zero disables confirmation and clears the latch on the first accepted fix.
+  // The counter is still incremented when it does, so the two paths cannot
+  // disagree about how many fixes have landed.
+  ++gnss_consecutive_accepts_;
+  if (config_.gnss_reacquire_confirm_fixes <= 0 ||
+      gnss_consecutive_accepts_ >= config_.gnss_reacquire_confirm_fixes)
     post_outage_unconfirmed_ = false;
 
   Eigen::Matrix<double, sensors::GNSS_POS_DIM, 1> innovation =

@@ -519,3 +519,80 @@ TEST(GnssReacquireTest, BlackoutDoesNotUnlockRecoveryForALaterSpike) {
   EXPECT_LT(err_end, SPIKE_M * 0.25)
       << "the filter followed the spike";
 }
+
+// The confirmation count is a parameter now, so sweep it and assert the output
+// changes. That rule came out of PR #129 itself: the knob it parameterised had
+// been dead, and sweeping it through its range produced byte-identical results,
+// which is what exposed the bug. A knob that compiles and passes tests is not a
+// knob that does anything.
+//
+// The observable is the latch's downstream effect, because the latch itself is
+// private (#125). Scenario is the one above: blackout, clean recovery, then a
+// sustained offset. Set the confirmation count higher than the number of clean
+// fixes available and the latch never clears, so the later spike inherits the
+// blackout's verdict, unlocks the recovery inflation and drags the filter onto
+// the offset. Set it to 0 or 3 and the latch clears, so the spike is rejected.
+TEST(GnssReacquireTest, SweepTheReacquireConfirmCount) {
+  auto run = [](int confirm_fixes) {
+    FusionCoreConfig cfg = blackout_config();
+    cfg.gnss_reacquire_confirm_fixes = confirm_fixes;
+    FusionCore fc(cfg);
+    State s0;
+    fc.init(s0, 0.0);
+
+    const double dt = 0.01, g = 9.80665;
+    const double TRUE_SPEED = 1.5, SLIP_SPEED = 2.1;
+    const double T_PRE = 120.0, T_BLACKOUT = 460.0, T_CLEAN = 120.0, T_SPIKE = 120.0;
+    const double t_out_start = T_PRE;
+    const double t_out_end   = T_PRE + T_BLACKOUT;
+    const double t_spike_beg = t_out_end + T_CLEAN;
+    const double t_end       = t_spike_beg + T_SPIKE;
+    const double SPIKE_M     = 300.0;
+
+    double true_x = 0.0;
+    int spike_accepted = 0;
+
+    for (int step = 1; step * dt <= t_end + 1e-9; ++step) {
+      const double t = step * dt;
+      true_x += TRUE_SPEED * dt;
+      const bool blackout = (t >= t_out_start && t < t_out_end);
+      const bool spiking  = (t >= t_spike_beg);
+
+      fc.update_imu(t, 0, 0, 0, 0, 0, g);
+      if (step % 2 == 0) {
+        fc.update_encoder(t, blackout ? SLIP_SPEED : TRUE_SPEED, 0.0, 0.0);
+        fc.update_ground_constraint(t);
+      }
+      if (step % 20 == 0 && !blackout) {
+        fc.update_gnss(t, fix_at(true_x + (spiking ? SPIKE_M : 0.0), 0.0));
+        if (spiking && fc.get_gnss_debug().accepted) ++spike_accepted;
+      }
+    }
+    struct R { double err_end; int spike_accepted; };
+    return R{std::abs(fc.get_state().x[X] - true_x), spike_accepted};
+  };
+
+  // 600 clean fixes are available between the blackout and the spike, so
+  // 100000 is "never confirmed" and 0, 1 and 3 all confirm well before it.
+  const int sweep[] = {0, 1, 3, 100000};
+  double err[4];
+  int acc[4];
+  for (int i = 0; i < 4; ++i) {
+    auto r = run(sweep[i]);
+    err[i] = r.err_end;
+    acc[i] = r.spike_accepted;
+    std::cerr << "  confirm_fixes " << sweep[i]
+              << "  spike fixes accepted " << r.spike_accepted
+              << "  error at the end " << r.err_end << " m\n";
+  }
+
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_LT(acc[i], 10)
+        << "confirm_fixes " << sweep[i] << " should have cleared the latch, so "
+           "the sustained offset should have been rejected";
+  }
+  EXPECT_GT(acc[3], acc[0])
+      << "a confirmation count that can never be reached left the latch set, so "
+         "the spike should have been accepted where it was not at 0. The knob "
+         "reached the filter and changed nothing: that is the #129 bug again.";
+}

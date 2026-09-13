@@ -361,6 +361,11 @@ public:
     declare_parameter("gnss.coast_q_bias_factor",   100.0);
     declare_parameter("gnss.coast_imu_wz_scale",    1.0);
     declare_parameter("gnss.recovery_rejection_n",  15);
+    // Accepted fixes in a row before an outage is treated as genuinely over.
+    // Was a hardcoded 3, which is 0.6 s on a 5 Hz receiver and 15 s on a 0.2 Hz
+    // one: the same constant means very different things depending on the fix
+    // rate, which is what #126 is about. 0 clears the latch on the first fix.
+    declare_parameter("gnss.reacquire_confirm_fixes", 3);
     declare_parameter("gnss.p_inflate_sigma",       50.0);
     declare_parameter("gnss.recovery_timeout_s",    0.0);
     // How far the robot must travel before heading is declared observable and
@@ -716,6 +721,8 @@ public:
     config.gnss_coast_q_bias_factor   = get_parameter("gnss.coast_q_bias_factor").as_double();
     config.gnss_coast_imu_wz_scale    = get_parameter("gnss.coast_imu_wz_scale").as_double();
     config.gnss_recovery_rejection_n  = get_parameter("gnss.recovery_rejection_n").as_int();
+    config.gnss_reacquire_confirm_fixes =
+      static_cast<int>(get_parameter("gnss.reacquire_confirm_fixes").as_int());
     config.gnss_p_inflate_sigma       = get_parameter("gnss.p_inflate_sigma").as_double();
     // gnss.recovery_timeout_s is still DECLARED so existing configs keep loading,
     // but the filter never read it and the behaviour its documentation described
