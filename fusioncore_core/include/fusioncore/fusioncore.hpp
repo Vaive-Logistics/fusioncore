@@ -961,6 +961,9 @@ private:
   // Decides, on the first fix of a rejection sequence, whether it follows a
   // GNSS gap. Called from every gate that can start such a sequence.
   void note_rejection_cascade_start(double timestamp_seconds);
+  // Re-admit GNSS when the filter, not the receiver, is the thing that is wrong.
+  // Called from every gate that counts a rejection (#120).
+  void maybe_inflate_for_recovery(const sensors::GnssPosMeasurement& innovation_pre);
   void note_mag_outcome(double timestamp_seconds);
 
   // Inter-sensor clock-skew protection. Raw per-stream stamps (recorded whether

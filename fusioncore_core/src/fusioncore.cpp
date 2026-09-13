@@ -996,6 +996,43 @@ double FusionCore::xchk_median_deg() const {
                        : 0.5 * (v[xchk_n_ / 2 - 1] + v[xchk_n_ / 2]);
 }
 
+// Re-admit GNSS after the filter has dead-reckoned far enough that its own
+// estimate, not the receiver, is the thing that is wrong.
+//
+// Called from EVERY gate that counts a rejection, not just chi2. It used to live
+// inside the chi2 branch, which meant any gate running earlier returned first and
+// the counter climbed past every trigger while the code that acts on it was
+// unreachable. Measured on NCLT 2012-06-15 with the continuity gate armed: the
+// rejection sequence after the blackout ran 7 IMPLAUSIBLE_JUMP, 5 CHI2_FAILED,
+// then 18 CONTINUITY_BREAK to the end of the run, and the filter finished 112 m
+// out instead of 13 m. See issue #120.
+//
+// IMPLAUSIBLE_JUMP deliberately does NOT call this: that gate rejects on physics
+// and must never be able to inflate P, or an outlier could talk its way in.
+void FusionCore::maybe_inflate_for_recovery(
+  const sensors::GnssPosMeasurement& innovation_pre)
+{
+  if (!reject_after_gap_) return;
+  if (config_.gnss_recovery_rejection_n <= 0) return;
+  if (gnss_consecutive_rejects_ % config_.gnss_recovery_rejection_n != 0) return;
+
+  // Size the inflation from what the receiver is actually saying rather than
+  // from a fixed constant. After a blackout the filter's error is whatever its
+  // dead reckoning accumulated, and no constant brackets that: the old fixed
+  // 50 m covers a short outage and does nothing after several minutes, which is
+  // the case this exists for. Measured against 379 m of drift, the 50 m
+  // inflation changed nothing and 1501 consecutive fixes were rejected.
+  //
+  // The vertical term is sized separately, because the gate is 3-DOF and an
+  // altitude error the inflation never reaches can hold it shut on its own.
+  const double innov_xy = std::hypot(innovation_pre[0], innovation_pre[1]);
+  const double s2 = std::max(
+      config_.gnss_p_inflate_sigma * config_.gnss_p_inflate_sigma,
+      innov_xy * innov_xy);
+  const double innov_z = std::abs(innovation_pre[2]);
+  ukf_.inflate_position_covariance(s2, innov_z * innov_z);
+}
+
 // At the start of a rejection sequence, decide whether GNSS was continuous (a
 // persistent outlier like a multipath spike) or is returning after a gap (the
 // filter may have dead-reckoned away from truth while blind). Only the latter
@@ -1403,6 +1440,19 @@ bool FusionCore::apply_gnss_update(
           note_rejection_cascade_start(timestamp_seconds);
           gnss_consecutive_accepts_ = 0;
           ++gnss_consecutive_rejects_;
+          // This gate runs BEFORE chi2 and returns, so without reaching the
+          // recovery decision here a continuity cascade counts its way past every
+          // trigger while nothing acts on it (#120). The innovation is not
+          // computed yet on this path, so compute it, and only when the trigger
+          // is actually due rather than on every rejection.
+          if (reject_after_gap_ && config_.gnss_recovery_rejection_n > 0 &&
+              gnss_consecutive_rejects_ % config_.gnss_recovery_rejection_n == 0) {
+            sensors::GnssPosMeasurement innov_c;
+            sensors::GnssPosNoiseMatrix S_c;
+            ukf_.predict_measurement<sensors::GNSS_POS_DIM>(
+              z, h_gnss, R, innov_c, S_c);
+            maybe_inflate_for_recovery(innov_c);
+          }
           return false;
         }
       }
@@ -1515,42 +1565,7 @@ bool FusionCore::apply_gnss_update(
           ukf_.set_position_noise_scale(config_.gnss_coast_q_factor);
           ukf_.set_gyro_bias_noise_scale(config_.gnss_coast_q_bias_factor);
         }
-        if (reject_after_gap_ &&
-            config_.gnss_recovery_rejection_n > 0 &&
-            gnss_consecutive_rejects_ % config_.gnss_recovery_rejection_n == 0) {
-          // Size the inflation from what the receiver is actually saying, not
-          // from a fixed constant. After a blackout the filter's position error
-          // is whatever its dead reckoning accumulated, and no constant brackets
-          // that: the old fixed 50 m covers a short outage and does nothing
-          // after several minutes, which is the case this exists for. Measured
-          // on NCLT 2012-06-15 and reproduced in test_gnss_reacquire: 379 m of
-          // drift, 1501 consecutive fixes rejected, the 50 m inflation changed
-          // nothing, and the filter never re-acquired.
-          //
-          // The innovation is the measurement of how far off the filter is, and
-          // the receiver has now said the same thing N times running, so use it.
-          // gnss_p_inflate_sigma stays as a floor so a config that raised it
-          // keeps its behaviour.
-          //
-          // Re-armed every N rejections rather than fired once, because one
-          // inflation is not guaranteed to be enough: if the drift is still
-          // growing, the counter would sail past a single == N trigger and the
-          // filter would stay locked out for good.
-          const double innov_xy = std::hypot(innovation_pre[0], innovation_pre[1]);
-          const double s2 = std::max(
-              config_.gnss_p_inflate_sigma * config_.gnss_p_inflate_sigma,
-              innov_xy * innov_xy);
-          // Vertical too, sized from the vertical innovation alone rather than
-          // the horizontal floor. The gate is 3-DOF, so an altitude error the
-          // inflation never reaches can hold it shut on its own: measured on
-          // NCLT 2012-06-15, the Mahalanobis ladder descended 75 -> 18.4 and
-          // then oscillated between 18 and 21 against a threshold of 16.27 for
-          // the rest of the run, never opening. No floor here, because a robot
-          // whose altitude is fine should not have its vertical certainty
-          // thrown away to fix a horizontal problem.
-          const double innov_z = std::abs(innovation_pre[2]);
-          ukf_.inflate_position_covariance(s2, innov_z * innov_z);
-        }
+        maybe_inflate_for_recovery(innovation_pre);
       }
       return false;
     }
