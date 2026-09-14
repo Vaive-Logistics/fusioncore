@@ -1576,6 +1576,26 @@ bool FusionCore::apply_gnss_update(
   // Only accepted fixes become the continuity reference, so a rejected spike can
   // never poison the baseline that judges the next fix.
   // Newest at the end, oldest dropped off the front once it is full.
+  // Never let the history span a GNSS gap. If it does, every statistic drawn
+  // from it is nonsense, including the one used to decide whether it is
+  // trustworthy: mean_dt becomes the average of a two-minute hole, the cadence
+  // guard then accepts an equally huge dt_new as "normal", and the gate runs a
+  // least-squares fit through the outage.
+  //
+  // Measured on NCLT 2012-06-15 with the gate armed, from the rejection itself:
+  //   resid=236.3  limit=2.0  span=462.38  dt_new=144.79  mean_dt=115.60
+  // 0.5*115.6 = 57.8 and 2.0*115.6 = 231.2, so dt_new=144.8 sat inside the
+  // window and the check ran. 607 consecutive rejections, and since only
+  // ACCEPTED fixes refresh the history it could never clear itself.
+  if (cont_n_ >= 2) {
+    const double buf_mean_dt =
+        (cont_t_[cont_n_ - 1] - cont_t_[0]) / (cont_n_ - 1);
+    if (buf_mean_dt > 1e-6 &&
+        (timestamp_seconds - cont_t_[cont_n_ - 1]) > 2.0 * buf_mean_dt) {
+      cont_n_ = 0;   // start a fresh track from this fix
+    }
+  }
+
   if (cont_n_ < CONT_HISTORY) {
     cont_x_[cont_n_] = fix.x;
     cont_y_[cont_n_] = fix.y;
