@@ -143,11 +143,11 @@ TEST(ContinuityAutoTest, ExplicitValueWinsAndSkipsLearning) {
 // because the P inflation that re-admits GNSS sits inside the chi2 block and a
 // continuity rejection returns before reaching it. Flip this back when the
 // recovery path fires from whichever gate did the rejecting.
-TEST(ContinuityAutoTest, DefaultsToOffUntilRecoveryIsGateAgnostic) {
+TEST(ContinuityAutoTest, ShipsOnNowThatRecoverySurvivesIt) {
   FusionCoreConfig shipped;                       // untouched defaults
-  EXPECT_FALSE(shipped.gnss.continuity_auto)
-      << "the learned gate is on by default again: confirm post-blackout "
-         "re-acquisition still works on NCLT before landing that";
+  EXPECT_TRUE(shipped.gnss.continuity_auto)
+      << "the learned gate was turned off again: it is the only gate that can "
+         "see a metre-scale spike, so confirm why before leaving it that way";
 }
 
 TEST(ContinuityAutoTest, CanStillBeTurnedOff) {

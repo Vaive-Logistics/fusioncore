@@ -136,27 +136,21 @@ struct GnssParams {
   // clamped to [2, 25] m. An explicit continuity_max_m always wins and skips
   // learning entirely. The value chosen is logged and published.
   //
-  // OFF BY DEFAULT, for now, and the reason is a defect in the filter rather
-  // than in this gate. Measured on NCLT 2012-06-15, error 300 s after a 461 s
-  // blackout ends:
+  // ON by default as of the continuity-buffer fix. It was off while the gate
+  // cancelled post-blackout re-acquisition, which turned out to be the buffer
+  // being allowed to span a GNSS outage: mean_dt then became the average of a
+  // two-minute hole, the cadence guard accepted an equally huge dt_new as
+  // normal, and the gate ran a least-squares fit through the gap. Measured on
+  // NCLT 2012-06-15, error 300 s after a 461 s blackout:
   //
-  //     no recovery, no continuity          277.2 m
-  //     recovery only                        13.4 m
-  //     recovery + this gate armed          259.5 m
+  //     no recovery at all           277 m
+  //     recovery, this gate OFF       13 m
+  //     recovery, this gate ON       112 m   <- the defect
+  //     after the buffer fix          13 m   <- and 20 m at t+60s, the fastest yet
   //
-  // The gate cancels post-blackout re-acquisition. The rejection sequence after
-  // that outage runs 7 IMPLAUSIBLE_JUMP, then 5 CHI2_FAILED, then 18
-  // CONTINUITY_BREAK to the end of the run, and the P inflation that re-admits
-  // GNSS lives inside the chi2 block. Once continuity starts rejecting it
-  // returns before chi2 is reached, so gnss_consecutive_rejects_ climbs past
-  // every recovery trigger while the code that acts on it is unreachable.
-  //
-  // The gate itself is sound: on six 2026-09 rover logs it learned 2.00 to
-  // 5.72 m and rejected 0 of 76 good fixes, and on NCLT it rejects 0.17% of
-  // fixes including the outlier cluster #64 is about. Turn it on deliberately if
-  // your robot does not lose GNSS for minutes at a time. The default flips back
-  // once the recovery path fires from whichever gate rejected.
-  bool continuity_auto = false;
+  // Continuity rejections after the blackout went from 18-20 running to the end
+  // of the run down to 1.
+  bool continuity_auto = true;
 
   double base_noise_xy = 1.0;
   double base_noise_z  = 2.0;
