@@ -26,7 +26,6 @@ fusioncore:
     # change to a product default cannot silently move benchmark numbers.
     # Player values are a fixed 3.0 m horizontal / 5.0 m vertical sigma.
     gnss.max_sigma_xy: 25.0
-    gnss.continuity_auto: true   # TEMPORARY: #116 investigation
     gnss.max_sigma_z: 50.0
     gnss.max_hdop: 10.0        # DOP path only; unused with the player's covariance
     gnss.min_satellites: 0     # NCLT doesn't publish satellite count
