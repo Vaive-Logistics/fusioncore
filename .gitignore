@@ -101,6 +101,7 @@ __pycache__/
 # Demo media + local context notes: kept locally, not pushed
 demo_output/
 gazebo.md
+roscon.md
 
 # Client engagement files: local only, never commit
 clients/
