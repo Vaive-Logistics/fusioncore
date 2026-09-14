@@ -304,6 +304,15 @@ fusioncore:
     # the bearing changes too quickly for a reliable heading measurement.
     # Decrease for robots that make tight turns at slow speed.
 
+    gnss.gps_track_heading_cross_check_deg: 15.0
+    # Reject a GPS track heading that disagrees with the current heading estimate
+    # by more than this, measured as the median of recent disagreements rather
+    # than a single sample so one bad bearing cannot veto a good source. Course
+    # over ground is not body heading: on any curved path the two differ by a real
+    # bias, and a biased measurement pulls the estimate wrong however honest its
+    # covariance is. This is the guard against fusing that bias for a whole run.
+    # Set to 0 to disable the cross-check.
+
     # ── Lever arm heading gating ──────────────────────────────────────────────
     gnss.lever_arm_max_heading_sigma_deg: 20.0
     # Lever arm correction is only applied when heading uncertainty is below this.
@@ -560,7 +569,25 @@ zupt.velocity_threshold: 0.05      # m/s below which the robot counts as still
 zupt.angular_threshold: 0.05       # rad/s, same
 zupt.noise_sigma: 0.01             # m/s: how tightly to believe "not moving"
 zupt.position_noise_scale: 1.0     # scale on POSITION process noise while still
+zupt.accel_std_threshold: 0.5      # m/s^2: block ZUPT if the IMU disagrees
 ```
+
+`zupt.accel_std_threshold` exists because wheels reporting zero is not the same
+thing as a stationary robot. An encoder that dies mid-run keeps publishing zero
+while the robot drives, ZUPT then pins velocity to zero and the filter spends the
+rest of the run refusing to let GNSS move it. On the run that found this, the
+estimate recovered about 7 m of 20 m actually driven.
+
+The accelerometer is the one sensor that cannot be fooled by a dead encoder, so
+the standard deviation of accelerometer magnitude over the last 100 samples is
+checked before ZUPT is allowed to fire. Measured on this project's rover:
+**1.69 to 2.25 m/s^2 while driving against 0.013 to 0.021 m/s^2 parked**, which
+is two orders of magnitude of separation, so the 0.5 default sits nowhere near
+either population. Set to 0 to disable the guard.
+
+A high-vibration platform running an isolated IMU mount may need this raised;
+`FusionCoreStatus::zupt_blocked_by_imu` says when the guard is the reason ZUPT
+is not firing, so check that before changing it.
 
 `zupt.position_noise_scale` is the one that fixes the drift. At 1.0 nothing
 changes. Below 1.0 the position covariance stops growing while the robot is
