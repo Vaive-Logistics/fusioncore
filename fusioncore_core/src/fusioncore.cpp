@@ -244,9 +244,6 @@ void FusionCore::reset() {
   xchk_i_               = 0;
   snapshot_buffer_.clear();
   imu_buffer_.clear();
-  // Several in a row, not one: see post_outage_unconfirmed_.
-  if (++gnss_consecutive_accepts_ >= kAcceptsToConfirmReacquisition)
-    post_outage_unconfirmed_ = false;
   gnss_consecutive_rejects_ = 0;
   gnss_in_coast_            = false;
   gnss_in_recovery_         = false;
@@ -1659,6 +1656,11 @@ bool FusionCore::apply_gnss_update(
     ukf_.set_gyro_bias_noise_scale(1.0);
   }
   gnss_consecutive_rejects_ = 0;
+  // Several in a row, not one. One fix landing near a drifted estimate proves
+  // nothing, so the outage stays latched until the receiver has demonstrably
+  // come back (see post_outage_unconfirmed_).
+  if (++gnss_consecutive_accepts_ >= kAcceptsToConfirmReacquisition)
+    post_outage_unconfirmed_ = false;
 
   Eigen::Matrix<double, sensors::GNSS_POS_DIM, 1> innovation =
     ukf_.update<sensors::GNSS_POS_DIM>(z, h_gnss, R);

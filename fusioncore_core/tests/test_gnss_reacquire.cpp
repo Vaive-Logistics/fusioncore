@@ -452,3 +452,70 @@ TEST(GnssReacquireTest, OneAcceptedFixMustNotDisarmRecovery) {
   EXPECT_LT(err_300, 10.0)
       << "a single accepted fix disarmed recovery for the rest of the run";
 }
+
+// A blackout earlier in the run must not weaken spike rejection later.
+//
+// post_outage_unconfirmed_ is a latch: the first rejection cascade that follows
+// a real GNSS gap sets it, and from then on every cascade counts as "this
+// follows a gap" until the receiver has demonstrably come back. If nothing ever
+// clears it, a sustained outlier during normal driving inherits the verdict from
+// a blackout minutes earlier, unlocks the recovery inflation, and the filter
+// walks onto the spike. That is the failure gnss_coast_min_gap_s exists to stop,
+// re-opened by an outage that happened long before.
+//
+// The run here is blackout, clean recovery, then a continuous 60 m offset with
+// the fix cadence never interrupted.
+TEST(GnssReacquireTest, BlackoutDoesNotUnlockRecoveryForALaterSpike) {
+  FusionCore fc(blackout_config());
+  State s0;
+  fc.init(s0, 0.0);
+
+  const double dt = 0.01, g = 9.80665;
+  const double TRUE_SPEED = 1.5, SLIP_SPEED = 2.1;
+  const double T_PRE = 120.0, T_BLACKOUT = 460.0, T_CLEAN = 120.0, T_SPIKE = 120.0;
+  const double t_out_start = T_PRE;
+  const double t_out_end   = T_PRE + T_BLACKOUT;
+  const double t_spike_beg = t_out_end + T_CLEAN;
+  const double t_end       = t_spike_beg + T_SPIKE;
+  const double SPIKE_M     = 300.0;
+
+  double true_x = 0.0, err_before_spike = 0.0, err_end = 0.0;
+  int spike_accepted = 0, spike_rejected = 0;
+
+  for (int step = 1; step * dt <= t_end + 1e-9; ++step) {
+    const double t = step * dt;
+    true_x += TRUE_SPEED * dt;
+    const bool blackout = (t >= t_out_start && t < t_out_end);
+    const bool spiking  = (t >= t_spike_beg);
+
+    fc.update_imu(t, 0, 0, 0, 0, 0, g);
+    if (step % 2 == 0) {
+      fc.update_encoder(t, blackout ? SLIP_SPEED : TRUE_SPEED, 0.0, 0.0);
+      fc.update_ground_constraint(t);
+    }
+    if (step % 20 == 0 && !blackout) {
+      fc.update_gnss(t, fix_at(true_x + (spiking ? SPIKE_M : 0.0), 0.0));
+      if (spiking) {
+        if (fc.get_gnss_debug().accepted) ++spike_accepted; else ++spike_rejected;
+      }
+    }
+    if (std::abs(t - (t_spike_beg - dt)) < dt * 0.5)
+      err_before_spike = std::abs(fc.get_state().x[X] - true_x);
+  }
+  err_end = std::abs(fc.get_state().x[X] - true_x);
+
+  std::cerr << "  blackout, recovery, then a sustained " << SPIKE_M << " m offset\n"
+            << "    error entering the spike : " << err_before_spike << " m\n"
+            << "    error at the end         : " << err_end << " m\n"
+            << "    spike fixes acc / rej    : " << spike_accepted << " / " << spike_rejected << "\n";
+
+  ASSERT_LT(err_before_spike, 5.0)
+      << "recovery from the blackout did not happen, the spike half proves nothing";
+  EXPECT_LT(spike_accepted, 10)
+      << "the gate opened on a continuous outlier because an earlier blackout "
+         "left the post-outage latch set";
+  // Dead reckoning for the whole spike window is expected to drift; walking onto
+  // the offset itself is not. The two are an order of magnitude apart.
+  EXPECT_LT(err_end, SPIKE_M * 0.25)
+      << "the filter followed the spike";
+}
