@@ -137,6 +137,9 @@ void FusionCore::init(const State& initial_state, double timestamp_seconds) {
   gps_track_hdg_fused_  = false;
   hdg_window_had_turn_  = false;
   xchk_ref_set_         = false;
+  acc_n_                = 0;
+  acc_i_                = 0;
+  zupt_blocked_by_imu_  = false;
   post_outage_unconfirmed_ = false;
   gnss_consecutive_accepts_ = 0;
   encoder_reason_       = EncoderRejectionReason::NOT_PROCESSED;
@@ -227,6 +230,9 @@ void FusionCore::reset() {
   gps_track_hdg_fused_  = false;
   hdg_window_had_turn_  = false;
   xchk_ref_set_         = false;
+  acc_n_                = 0;
+  acc_i_                = 0;
+  zupt_blocked_by_imu_  = false;
   post_outage_unconfirmed_ = false;
   gnss_consecutive_accepts_ = 0;
   encoder_reason_       = EncoderRejectionReason::NOT_PROCESSED;
@@ -694,6 +700,13 @@ void FusionCore::update_imu(
   if (std::abs(ukf_.state().x[WZ]) > config_.gps_track_heading_max_yaw_rate)
     hdg_window_had_turn_ = true;
 
+  // Accelerometer magnitude for the ZUPT stationarity check. Magnitude rather
+  // than per-axis so it works whether or not gravity has been removed, and the
+  // standard deviation removes the DC term either way.
+  acc_mag_[acc_i_] = std::sqrt(ax * ax + ay * ay + az * az);
+  acc_i_ = (acc_i_ + 1) % ACC_WIN;
+  if (acc_n_ < ACC_WIN) ++acc_n_;
+
   last_imu_time_ = timestamp_seconds;
   ++update_count_;
 }
@@ -950,6 +963,18 @@ void FusionCore::update_zupt(double timestamp_seconds, double noise_sigma) {
   // encoder driving 20 m, releasing only the suppression recovered 7.4 m of it.
   if (parked_moving_detected_) return;
 
+  // The wheels saying stopped is not evidence the robot is stopped. Ask the
+  // accelerometer, which cannot be fooled by a dead encoder. See
+  // zupt_accel_std_threshold for the measured separation and its limits.
+  zupt_blocked_by_imu_ = false;
+  if (config_.zupt_accel_std_threshold > 0.0) {
+    const double astd = accel_magnitude_std();
+    if (astd >= 0.0 && astd > config_.zupt_accel_std_threshold) {
+      zupt_blocked_by_imu_ = true;
+      return;
+    }
+  }
+
   // ZUPT is an opportunistic pseudo-measurement triggered by another sensor's
   // stamp. If that stamp lags the filter clock (inter-sensor skew), skip it
   // rather than let predict_to re-base the clock backward.
@@ -983,6 +1008,21 @@ void FusionCore::update_zupt(double timestamp_seconds, double noise_sigma) {
   }
 }
 
+
+// Standard deviation of accelerometer magnitude over the last second, or -1
+// while the window is still filling. See zupt_accel_std_threshold.
+double FusionCore::accel_magnitude_std() const {
+  if (acc_n_ < ACC_WIN) return -1.0;
+  double mean = 0.0;
+  for (int i = 0; i < acc_n_; ++i) mean += acc_mag_[i];
+  mean /= acc_n_;
+  double ss = 0.0;
+  for (int i = 0; i < acc_n_; ++i) {
+    const double d = acc_mag_[i] - mean;
+    ss += d * d;
+  }
+  return std::sqrt(ss / (acc_n_ - 1));
+}
 
 // Median of the recent (filter yaw - GPS track bearing) samples, in degrees.
 // Median rather than mean: one bearing taken over a slightly curved stretch is a
@@ -1962,6 +2002,8 @@ FusionCoreStatus FusionCore::get_status() const {
   status.encoder_reason          = encoder_reason_;
   status.encoder_chi2            = encoder_chi2_;
   status.encoder_chi2_threshold  = config_.outlier_threshold_enc;
+  status.zupt_accel_std       = accel_magnitude_std();
+  status.zupt_blocked_by_imu  = zupt_blocked_by_imu_;
   status.heading_vs_track_deg = xchk_median_deg();
   status.heading_vs_track_n   = xchk_n_;
   status.distance_traveled = distance_traveled_;

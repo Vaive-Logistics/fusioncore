@@ -292,6 +292,35 @@ struct FusionCoreConfig {
   // driving on dead encoders tracks close to 1.0, so 0.85 leaves room on both
   // sides. Note the parked worst case is not small: a receiver whose error
   // drifts one way under changing satellite geometry looks quite straight.
+  // Refuse ZUPT when the accelerometer says the robot is moving, however still
+  // the wheels claim to be. Standard deviation of accelerometer MAGNITUDE over
+  // the last second, in m/s^2. 0 disables the check.
+  //
+  // The wheels alone are not evidence of being stationary: they can skid, slip,
+  // or simply fail. Raised by Martin Pecka on ROS Discourse, and it had already
+  // cost a run here: an encoder died mid-drive and kept reporting zero, so the
+  // filter concluded parked, suppressed position noise, and then refused to let
+  // GNSS move the estimate. It recovered 7 m of the 20 m actually driven.
+  //
+  // A robot in motion vibrates and a parked one does not, and the gap is not
+  // subtle. Measured over 1 s windows across six 2026-09 rover logs:
+  //
+  //     genuinely driving    1.69, 1.90, 2.14, 2.25 m/s^2
+  //     stationary           0.013 to 0.021 m/s^2
+  //
+  // Default 0.5 is deliberately generous rather than centred: too HIGH only
+  // leaves today's behaviour, while too LOW would stop ZUPT firing at all and
+  // bring back the idle drift it exists to suppress. At 0.5 there is 25x margin
+  // above a parked rover and 3.4x below a driving one, which leaves room for a
+  // noisier IMU than this one. The measured value is published as
+  // zupt_accel_std so a user can pick their own from their own data.
+  //
+  // Honest limit: this is not a proof of stationarity. A robot at constant
+  // velocity on a very smooth surface has little angular rate and near zero net
+  // acceleration, so vibration is what gives it away and vibration is surface
+  // dependent. It is a large improvement on trusting the wheels, not a
+  // guarantee.
+  double zupt_accel_std_threshold = 0.5;
   double zupt_parked_motion_straightness = 0.85;
 
   // Nominal IMU rate in Hz. Above zero, the PREDICT step between IMU messages
@@ -611,6 +640,10 @@ struct FusionCoreStatus {
   // is not active yet, either because it is disabled or still learning.
   double continuity_limit_m     = 0.0;
   bool   continuity_learned     = false;
+  // Accelerometer magnitude standard deviation over the last second (m/s^2),
+  // and whether it is what stopped ZUPT firing. -1 until the window fills.
+  double zupt_accel_std         = -1.0;
+  bool   zupt_blocked_by_imu    = false;
   double heading_vs_track_deg   = 0.0;
   int    heading_vs_track_n     = 0;
   double        distance_traveled   = 0.0;
@@ -1111,6 +1144,15 @@ private:
   // yaw_rate check; consumed and cleared in apply_gnss_update()'s heading
   // fusion block.
   bool   hdg_window_had_turn_ = false;
+
+  // Rolling accelerometer magnitude window for the ZUPT stationarity check.
+  // 100 samples is one second at the 100 Hz these IMUs run at.
+  static constexpr int ACC_WIN = 100;
+  double acc_mag_[ACC_WIN] = {0.0};
+  int    acc_n_ = 0;
+  int    acc_i_ = 0;
+  bool   zupt_blocked_by_imu_ = false;
+  double accel_magnitude_std() const;
 
   // Outcome of the most recent encoder update (see EncoderRejectionReason).
   EncoderRejectionReason encoder_reason_ = EncoderRejectionReason::NOT_PROCESSED;

@@ -361,3 +361,76 @@ TEST(IdleDriftTest, GenuineWanderDoesNotTripTheDeadEncoderCheck) {
   EXPECT_LT(std::hypot(fc.get_state().x[X], fc.get_state().x[Y]), 2.0)
     << "the parked robot drifted as if the suppression had been released";
 }
+
+// The wheels saying stopped is not evidence the robot is stopped.
+//
+// Raised by Martin Pecka on ROS Discourse, and it had already cost a run here:
+// an encoder died mid-drive and kept reporting zero, so the filter concluded
+// parked, suppressed position noise, and then refused to let GNSS move the
+// estimate. It recovered 7 m of the 20 m actually driven.
+//
+// The accelerometer cannot be fooled that way. Vibration levels below are the
+// ones measured over 1 s windows on six 2026-09 rover logs: 0.013 to 0.021 m/s^2
+// stationary, 1.69 to 2.25 m/s^2 driving.
+namespace {
+
+// Deterministic pseudo-vibration, so the test does not depend on a RNG.
+double wobble(int k) {
+  return std::sin(k * 2.399963) * std::cos(k * 0.7853981) +
+         0.5 * std::sin(k * 1.1071487);
+}
+
+// Feeds IMU at 100 Hz with the given vibration level while the WHEELS insist the
+// robot is stationary, then reports whether ZUPT was allowed to fire.
+bool zupt_fired_with_vibration(double accel_std_target, double threshold = -1.0) {
+  FusionCoreConfig cfg;
+  cfg.imu_has_magnetometer = false;
+  if (threshold >= 0.0) cfg.zupt_accel_std_threshold = threshold;
+  cfg.motion_model = create_motion_model("DifferentialDrive");
+  FusionCore fc(cfg);
+  State s0;
+  fc.init(s0, 0.0);
+
+  const double dt = 0.01, g = 9.80665;
+  bool fired = false;
+  for (int step = 1; step <= 400; ++step) {
+    const double t = step * dt;
+    const double v = accel_std_target * wobble(step);
+    fc.update_imu(t, 0, 0, 0, v, v * 0.7, g + v);
+    if (step % 2 == 0) {
+      // The lie: wheels report a dead stop throughout.
+      fc.update_encoder(t, 0.0, 0.0, 0.0);
+      const auto before = fc.get_state().x[VX];
+      fc.update_zupt(t, 0.01);
+      (void)before;
+      if (!fc.get_status().zupt_blocked_by_imu && step > 250) fired = true;
+    }
+  }
+  return fired;
+}
+
+} // namespace
+
+TEST(IdleDriftTest, ZuptRefusedWhenTheAccelerometerSaysMoving) {
+  // 2.0 m/s^2 is the measured driving regime. The wheels claim stopped, so
+  // without the IMU check ZUPT would fire and pin the filter.
+  EXPECT_FALSE(zupt_fired_with_vibration(2.0))
+      << "ZUPT fired on a dead encoder while the accelerometer showed "
+         "driving-level vibration";
+}
+
+TEST(IdleDriftTest, ZuptStillFiresWhenGenuinelyParked) {
+  // 0.02 m/s^2 is the measured stationary regime. ZUPT must be unaffected,
+  // otherwise this check costs the idle drift suppression it sits next to.
+  EXPECT_TRUE(zupt_fired_with_vibration(0.02))
+      << "the IMU check blocked ZUPT on a genuinely parked robot";
+}
+
+// Proves the guard is what does the work, rather than the scenario simply never
+// firing ZUPT for some other reason. Same driving-level vibration, check
+// disabled: ZUPT must fire, which is exactly the old behaviour that lost 13 m.
+TEST(IdleDriftTest, WithoutTheImuCheckTheDeadEncoderIsBelieved) {
+  EXPECT_TRUE(zupt_fired_with_vibration(2.0, /*threshold=*/0.0))
+      << "with the check disabled ZUPT should still fire on the lying wheels, "
+         "otherwise the two tests above prove nothing";
+}

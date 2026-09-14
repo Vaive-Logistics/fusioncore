@@ -399,7 +399,13 @@ public:
     // the robot is considered stationary and a zero-velocity measurement is fused.
     declare_parameter("zupt.enabled",            true);
     declare_parameter("zupt.velocity_threshold", 0.05);  // m/s
-    declare_parameter("zupt.angular_threshold",  0.05);  // rad/s
+    declare_parameter("zupt.angular_threshold",  0.05);
+    // Refuse ZUPT when the accelerometer says the robot is moving, whatever the
+    // wheels claim. Standard deviation of accelerometer magnitude over the last
+    // second (m/s^2). Wheels can skid, slip or fail: a dead encoder reporting
+    // zero used to read as "parked" and cost 13 m of a 20 m drive. Measured on
+    // six rover logs: stationary 0.013-0.021, driving 1.69-2.25. 0 disables.
+    declare_parameter("zupt.accel_std_threshold", 0.5);  // rad/s
     declare_parameter("zupt.noise_sigma",        0.01);  // m/s: tight
     // Position process noise scale while ZUPT holds the robot still. 1.0 keeps
     // the old behaviour. Below 1.0 stops P growing on a parked robot, so the
@@ -761,6 +767,8 @@ public:
     zupt_enabled_            = get_parameter("zupt.enabled").as_bool();
     zupt_velocity_threshold_ = get_parameter("zupt.velocity_threshold").as_double();
     zupt_angular_threshold_  = get_parameter("zupt.angular_threshold").as_double();
+    config.zupt_accel_std_threshold =
+        get_parameter("zupt.accel_std_threshold").as_double();
     zupt_noise_sigma_        = get_parameter("zupt.noise_sigma").as_double();
     config.zupt_position_noise_scale =
       get_parameter("zupt.position_noise_scale").as_double();

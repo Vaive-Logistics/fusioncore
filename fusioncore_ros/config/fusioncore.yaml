@@ -313,6 +313,12 @@ fusioncore:
     zupt.enabled: true
     zupt.velocity_threshold: 0.05   # m/s: below this = stationary
     zupt.angular_threshold:  0.05   # rad/s: below this = not rotating
+    # Refuse ZUPT when the accelerometer says the robot is moving, whatever the
+    # wheels claim: they can skid, slip or fail. Standard deviation of accel
+    # magnitude over the last second (m/s^2). Measured on six rover logs:
+    # stationary 0.013-0.021, driving 1.69-2.25. The default is deliberately
+    # generous, since too low would stop ZUPT firing at all. 0 disables.
+    zupt.accel_std_threshold: 0.5
     zupt.noise_sigma: 0.01          # m/s: tighter = stronger zero-velocity correction
 
     # ── Adaptive noise covariance ─────────────────────────────────────────────
