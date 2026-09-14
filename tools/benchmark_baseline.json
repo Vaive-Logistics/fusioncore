@@ -1,44 +1,44 @@
 {
   "_note": "Per-sequence reference for the NCLT regression checker (tools/check_benchmark_regression.py). NOT the published table. FusionCore ATE RMSE in metres, SE3-aligned to RTK ground truth, regenerated from a run's results/metrics.json via tools/evaluate.py --json.",
-  "_status": "MEASURED 2026-09-12 on 1da0e33. 2012-06-15 re-measured after the post-blackout re-acquisition work: FusionCore 73.441, robot_localization 18.507 at 99.9 Hz. The two long-blackout sequences were also run twice each overnight on 98134bc, before the outage latch landed, and those medians are recorded below as the reference for their sequences until they are re-run. Every control in every run sat within 0.4% of its baseline, so the data feed was clean throughout.",
-  "baseline_commit": "1da0e33",
-  "recorded": "2026-09-12",
+  "_status": "MEASURED 2026-09-13/14 on bcc0e09, after the post-blackout re-acquisition work. Every control sat within 0.7% of its baseline across all runs, so the comparisons are valid. Repeats WITHIN a configuration are tight on all three sequences (0.34% to 4.6%), so a 5-10% move is real; the historical 9x spread on 2013-04-05 predates the ukf.alpha fix and no longer applies.",
+  "baseline_commit": "bcc0e09",
+  "recorded": "2026-09-14",
   "regression_threshold_pct": 10.0,
   "sequences": {
     "2012-06-15": {
-      "fusioncore_ate_rmse_3d": 73.441,
+      "fusioncore_ate_rmse_3d": 73.525,
       "fusioncore_ate_rmse_xy": 69.425,
       "fusioncore_rpe10_rmse": 24.836,
       "fusioncore_drift_m_per_km": 12.55,
-      "rl_ate_rmse_3d": 18.507,
+      "rl_ate_rmse_3d": 18.487,
       "rl_rpe10_rmse": 22.534,
       "rl_drift_m_per_km": 3.14,
       "verified": true,
-      "measured": "2026-09-12",
-      "commit": "1da0e33",
-      "note": "Long-blackout loss, issue #63: one 461.5 s GNSS gap, 13.9% of the run. Local accuracy is not the problem (RPE@10m 24.8 against RL's 22.6), and the filter tracks to 4.65 m median while fixes are present. The whole loss is drift accumulated blind. Post-blackout re-acquisition now works: 440 m of drift collapses to 13 m within 300 s of fixes returning, against 277 m before. Getting there needed three fixes, and the one that mattered was the outage latch: a single accepted fix landing near the drifted estimate used to disarm recovery for the rest of the run. Repeats on this sequence agree to 2.8%, so a 5% move here is real."
+      "measured": "2026-09-13",
+      "commit": "05f0872",
+      "note": "Issue #63, one 461 s blackout. Post-blackout recovery went 277 m (no fix) to 111 m (recovery only, continuity gate armed) to 13 m once the continuity history was stopped from spanning the gap. Continuity rejections after the blackout: 18-20 running to the end of the run, down to 1."
     },
     "2012-08-20": {
-      "fusioncore_ate_rmse_3d": 120.03,
+      "fusioncore_ate_rmse_3d": 116.444,
       "fusioncore_ate_rmse_xy": 121.669,
       "fusioncore_rpe10_rmse": 25.271,
       "fusioncore_drift_m_per_km": 16.35,
-      "rl_ate_rmse_3d": 10.52,
+      "rl_ate_rmse_3d": 10.519,
       "rl_rpe10_rmse": 18.962,
       "rl_drift_m_per_km": 1.4,
       "verified": true,
-      "measured": "2026-09-12",
-      "commit": "98134bc",
-      "note": "Median of two overnight runs, 122.729 and 117.325, spread 4.6%. RL 10.506 and 10.507 against a 10.52 baseline, so the control is solid. Measured BEFORE the outage latch (1da0e33) and worth re-running: this sequence's adversarial outlier cluster sits at the blackout boundary, which is exactly where that fix changes behaviour. Issue #64."
+      "measured": "2026-09-14",
+      "commit": "bcc0e09",
+      "note": "Issue #64. 120.03 to 116.4, inside the 4.6% spread, so unchanged rather than improved. Its value is as a no-regression check: seven GNSS gaps and an adversarial outlier cluster, and arming the learned continuity gate by default changed nothing. Recovery here was already fine (10 m) because the longest blackout is 228 s and drift only reached 90 m, within what chi2 alone could re-admit."
     },
     "2013-04-05": {
-      "fusioncore_ate_rmse_3d": 277.63,
+      "fusioncore_ate_rmse_3d": 189.7,
       "fusioncore_ate_rmse_xy": 200.91,
-      "rl_ate_rmse_3d": 268.28,
+      "rl_ate_rmse_3d": 266.7,
       "verified": true,
-      "measured": "2026-09-12",
-      "commit": "98134bc",
-      "note": "Median of two overnight runs, 275.951 and 279.303, spread 1.2%, with RL at 268.577 and 267.975 against a 268.639 baseline. No longer void: the control that moved in September has been stable across four runs since. FusionCore still beats RL here. Measured before the outage latch."
+      "measured": "2026-09-14",
+      "commit": "bcc0e09",
+      "note": "277.6 to 189.7, a 31.7% improvement, reproduced twice (190.028 and 189.388) against two pre-fix runs (275.951 and 279.303), control stable at ~267. This sequence FLIPS from a marginal loss to FusionCore beating RL by 29%. CAUSE, isolated by A/B: not the continuity gate (188.807 with it forced off) but the continuity BUFFER. A buffer spanning a blackout reports mean_dt ~115 s instead of 0.2 s, which feeds min_gap = max(1.0, 2*mean_dt) ~231 s in note_rejection_cascade_start, so any outage SHORTER than that is never classified as a gap and recovery never arms. This sequence has gaps of 275, 129, 65 and 55 s: only the first armed. Recovery after the 129 s gap went 746/750 m to 80/78 m. The 275 s gap is unchanged at ~264 m, which is why the fix first appeared to do nothing here."
     }
   },
   "_read_this_before_judging_any_regression": "The 9x run-to-run spread is NOT universal, which an earlier note here implied. Measured over six unattended runs on 2026-09-12: 2012-06-15 repeats to 2.8%, 2012-08-20 to 4.6%, 2013-04-05 to 1.2%. The historical 32 m to 345 m range was all one sequence, 2013-04-05, and got generalised. So on these sequences a 5 to 10 percent change IS measurable and two runs are enough to see it. Keep the caution for a sequence whose spread has not been measured, and re-check it when adding one. robot_localization remains the control: if it moves more than about a percent between runs, the comparison is void whatever FusionCore did, and that check has already caught one wrong diagnosis (see issue #119)."
