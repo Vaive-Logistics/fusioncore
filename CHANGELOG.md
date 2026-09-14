@@ -8,7 +8,128 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+This is the 0.4.0 candidate rather than a patch release. Two public fields were
+removed from `FusionCoreConfig`, so code that sets them directly against
+`fusioncore_core` stops compiling, and four defaults now change behaviour for an
+existing user who upgrades without touching their config. Read the Changed
+section before upgrading; nothing else in the release needs action.
+
+### Changed
+
+- **Four defaults now do something they previously did not.** Each is covered in
+  detail below; the table is here so nobody has to find them.
+
+  | setting | was | now | effect |
+  |---|---|---|---|
+  | `gnss.recovery_rejection_n` | 0, off | 15 | post-blackout P inflation fires |
+  | `gnss.continuity_auto` | new | `true` | fix-to-fix gate arms itself after 100 fixes |
+  | `zupt.accel_std_threshold` | new | 0.5 | the IMU can veto a ZUPT |
+  | `gnss.gps_track_heading_cross_check_deg` | new | 15.0 | a disagreeing GPS track heading is refused |
+
+  All four were shipped on deliberately. The two GNSS ones close failure modes
+  that make a filter look healthy while being unrecoverable, which is not a
+  condition to leave opt-in. If you need the previous behaviour, set each to 0.
+
+### Removed
+
+- **Two `FusionCoreConfig` fields nothing read.** `gnss_recovery_timeout_s` was
+  declared, documented with a description of behaviour that did not exist, set in
+  a shipped config, and never read by the filter. `encoder_nhc_vy_sigma` was
+  written by the node into a field nothing consumed, while the parameter that
+  feeds it reached `encoder.vel_noise_y` by a second assignment that did work, so
+  anyone reading the struct to find out how the non-holonomic constraint is
+  applied picked the wrong field.
+
+  The ROS parameter `gnss.recovery_timeout_s` is still **declared**, so existing
+  configs keep loading, and the node now warns once if it is set to anything but
+  zero rather than silently doing nothing. Direct users of `fusioncore_core` who
+  set either struct field will need to delete those lines. Closes #114.
+
 ### Added
+
+- **Post-blackout GNSS re-acquisition.** The largest behavioural change in this
+  release and the reason for the version bump. See Fixed below for the mechanism
+  and the numbers; the short version is that a filter which had dead-reckoned
+  through a multi-minute GNSS outage previously never recovered, and now does.
+
+- **`gnss.continuity_auto`: the fix-to-fix gate measures its own threshold.** The
+  continuity gate is the only outlier test that can see a metre-scale spike, because
+  chi2 judges a fix against the filter and its scale is `S = HPH' + R`: on a
+  2026-09-06 rover log a spike had to exceed 29 m before chi2 would reject it. The
+  gate existed but shipped off, because the right threshold is a property of the
+  receiver and asking a user to read a header and run a tool over a bag meant
+  nobody would.
+
+  So it measures instead. For the first 100 gated fixes it records the largest
+  residual against a least-squares line through the last five accepted fixes, then
+  holds `clamp(1.5 * max_residual, 2.0, 25.0)` for the rest of the run. Across
+  1287 fixes from six rover logs the largest residual was 3.81 m, which lands the
+  threshold near 5.7 m and would have rejected nothing on that clean data, while a
+  hand-picked 4.0 caught injected spikes from 4 m up. Deliberately looser than the
+  hand-picked value, because rejecting good fixes is the failure that has cost this
+  project most and an accepted 3 m spike moves the trajectory about 0.25 m.
+
+  Learned once and then held: a sliding estimate would be dragged upward by exactly
+  the spike train it is there to catch. The cost is that a receiver calibrated under
+  open sky carries that threshold into canopy where its honest scatter is larger,
+  which the 1.5x margin is the headroom for, and a run that starts rejecting shows
+  up in the outcome tally. `gnss.continuity_max_m` above zero still overrides it
+  with a fixed number. Closes #116.
+
+- **`gnss.gps_track_heading_cross_check_deg`: refuse a GPS track heading that
+  disagrees with the heading you already have.** Course over ground is not body
+  heading. On any curved path the two differ by a real bias, and a biased
+  measurement pulls the estimate wrong no matter how honest its covariance is. The
+  check is the median of recent disagreements rather than a single sample, so one
+  bad bearing cannot veto a good source and a persistent bias cannot hide behind
+  one good one. Default 15 degrees, 0 disables. Closes #118.
+
+- **`zupt.accel_std_threshold`: ask the accelerometer before believing the wheels
+  are stopped.** Wheels reporting zero is not the same thing as a stationary robot.
+  An encoder that dies mid-run keeps publishing zero while the robot drives; ZUPT
+  then pins velocity to zero, the filter holds position noise down, and it spends
+  the rest of the run refusing to let GNSS move it. On the run that found this the
+  estimate recovered about 7 m of 20 m actually driven.
+
+  The accelerometer is the one sensor a dead encoder cannot fool, so the standard
+  deviation of accelerometer magnitude over the last 100 samples is checked before
+  ZUPT fires. Measured on this project's rover: **1.69 to 2.25 m/s^2 driving against
+  0.013 to 0.021 m/s^2 parked**, two orders of magnitude apart, so the 0.5 default
+  sits nowhere near either population. `FusionCoreStatus::zupt_blocked_by_imu` says
+  when the guard is why ZUPT is not firing, which matters on a high-vibration
+  platform where the honest answer is to raise it. Three tests including a negative
+  control that fails without the guard. Closes #130.
+
+- **`gnss.min_satellites` can no longer silently reject every fix.** A `NavSatFix`
+  carries no satellite count. Setting `min_satellites` above zero while subscribing
+  to `NavSatFix` therefore rejected 100% of fixes, forever, with no error: the node
+  accepted the parameter, `ros2 param get` echoed it back, and the filter published
+  a dead-reckoned pose that looked plausible. The node now refuses the combination
+  at configure time and says which of the two settings to change. Extracted as
+  `min_satellites_gate.hpp` so the predicate is testable without a live node.
+  Closes #115.
+
+- **Encoder rejections say why, and how surprising they were.** The encoder path
+  had the same defect the GNSS path was fixed for in 0.3.9: a rejected update was
+  indistinguishable from an update that never arrived.
+  `FusionCoreStatus::encoder_rejection_reason` and `encoder_chi2` now name the
+  cause and the Mahalanobis distance behind it. #124.
+
+- **A predicted yaw channel for radar and GNSS velocity inputs.** Both measure
+  translation and neither measures yaw rate, so fusing them with a fabricated zero
+  pulled the yaw estimate toward zero on every update. They now substitute the
+  filter's own predicted yaw rate for the channel they cannot observe, which is
+  the same treatment the encoder's ignored channels already got. Closes #113.
+
+- **A reference config for BNO085 + F9P + PMW3901 on a tracked base**, plus the 19
+  parameters that were missing from the reference config entirely, plus a pointer
+  in all four GPS configs to how to measure their own spike-gate threshold instead
+  of copying one. #107.
+
+- **A secondary twist source can declare which channels it actually measures**, and
+  the encoder WZ bias is now added when predicting a yaw channel that source does
+  not provide. Closes #108.
+
 - **`imu.fixed_rate_hz`: propagate by a nominal dt instead of trusting stamp differences.** Anything downstream of an integrator amplifies timestamp error. On one recorded run, shifting every IMU stamp by a single microsecond and changing nothing else moved final yaw by 109 degrees. Most of that is an unbounded quaternion covariance rather than the stamps, but the sensitivity is real, and Martin Pecka noted on ROS Discourse that his team never computes dt in fusion from IMU timestamps at all, assuming the configured rate instead.
 
   Set above zero and the propagation step no longer depends on stamp jitter. Getting that to be true rather than nearly true took two attempts: letting only the first message through on its raw stamp left 76 degrees of sensitivity, and re-basing the clock to each incoming stamp left 2.4 degrees, because `(t + nominal) - t` rounds differently for every `t` and this filter is chaotic enough that any nonzero difference saturates. The clock now stays on the nominal grid and the sensitivity is gone.
@@ -41,6 +162,75 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   **The cost is real:** a robot parked for a long time cannot re-acquire if it was genuinely lost before it stopped. For a stop of tens of seconds that does not matter; for one parked overnight it does. The evidence is dropped the moment the encoders report motion. Prompted, like `zupt.position_noise_scale`, by Martin Pecka's phase-lock explanation on ROS Discourse.
 
 ### Fixed
+
+- **A filter that dead-reckoned through a GNSS outage now comes back.** This was
+  the single worst behaviour in the library and it took five separate defects to
+  clear. On NCLT 2012-06-15, aligned on the pre-blackout segment, error 300 s after
+  fixes returned went from **277 m to 13 m**. On a log with gaps of 275, 129, 65
+  and 55 s, error 300 s after the 129 s gap went from **746 m to 78 m**. On NCLT
+  2013-04-05, ATE went from 277.6 m to **189.7 m**, a 31.7% improvement reproduced
+  twice against two pre-fix runs.
+
+  The mechanism, in the order the pieces were found:
+
+  1. **The inflation had no size that could work.** After minutes of dead reckoning
+     the filter's error is far larger than its own `P`, so every returning fix looks
+     like a gross outlier to chi2 and is rejected forever. The inflation is now
+     sized from the rejected innovation itself, because the innovation *is* the
+     measurement of how far off the filter is and no fixed constant brackets
+     arbitrary drift. `gnss.p_inflate_sigma` is now a floor rather than the value.
+  2. **Only chi2 could arm it.** Recovery was decided inside the chi2 branch, so a
+     cascade that began at the continuity gate never armed it, which is most of
+     them. The decision moved to whichever gate rejects first. Closes #120.
+  3. **A 3-DOF gate cannot be opened by moving two of its axes.** The GNSS position
+     gate includes Z, so inflating only X and Y left it shut. The vertical term is
+     now sized from the vertical innovation.
+  4. **The gap test was in absolute seconds.** At 1 Hz the healthy spacing between
+     fixes *is* `gnss_coast_min_gap_s`, so an absolute 1.0 s test called every
+     single fix "after a gap" and the spike protection disappeared exactly where it
+     was needed. Measured against six rover logs all running a median 1.00 s with no
+     dropouts, and a 120 s sustained 300 m spike that was rejected 600 of 600 times
+     at 5 Hz dragged the filter 301 m off at 1 Hz. The threshold is now relative to
+     the receiver's own measured cadence.
+  5. **The continuity history was allowed to span the gap.** This was the one that
+     hid the rest. The history is also where the fix cadence is derived, so a buffer
+     spanning an outage produced a mean spacing of 115 s instead of 0.2. Everything
+     downstream inherited it: "have we just had an outage" became "was the gap longer
+     than 231 seconds", so every outage shorter than that stopped being recognised as
+     an outage at all and the recovery path never armed. The gate itself was healthy
+     by every measure you could take from outside: sensible rejection rate, rejecting
+     genuine outliers, threshold nowhere near unreachable. What was broken was a
+     statistic it exported to something else. The history now starts fresh whenever
+     the incoming fix is more than twice the buffer's own mean spacing away.
+
+  One accepted fix is also no longer enough to call an outage over. A fix landing
+  near a badly drifted estimate passes, corrects nothing, and used to disarm
+  recovery for the rest of the run: on one log, 1 accepted against 1999 rejected
+  and 690 m out. Recovery now stays armed until several fixes in a row are accepted.
+
+- **No more inventing a DOP in order to gate on it, and no more blaming
+  `min_satellites` for rejections it did not cause.** When a driver supplies no DOP,
+  one was synthesised from the covariance and then compared against DOP thresholds,
+  which is comparing metres to a unitless ratio. Synthetic DOP is now marked as such
+  and skipped by the gate. Separately, any fix refused by `is_valid()` for a reason
+  with no specific branch was reported as `MIN_SATS`, which sent at least one
+  investigation in the wrong direction; a `QUALITY_OTHER` catch-all now says
+  honestly that the fix was refused and the reason is not one of the named ones.
+  Both reason values are appended, so no existing published code shifts.
+  Closes #123.
+
+- **The GPS track-heading turn guard is sampled at IMU rate**, not at fix rate,
+  because a turn that starts and finishes between two fixes was invisible to it.
+  The discard reason is now published rather than inferred. Closes #111, closes #112.
+
+- **The parked-motion straightness bar is 0.85, not 0.70.** Measured against real
+  parked windows, which reach 0.72, so the old value false-positived on a genuinely
+  stationary robot. Straightness is displacement divided by path length: a parked
+  receiver wanders and returns so its path length accumulates while its displacement
+  does not, measured at 0.37 to 0.72, while a robot actually going somewhere climbs
+  toward 1.0. Displacement alone cannot separate them, a parked window in these logs
+  reached 12.85 m of displacement.
+
 - **A turn inside the GPS track-heading baseline no longer collapses the yaw covariance.** Contributed by Ignacio Villanua (#109), found on a real UGV running low-rate GPS with noisy IMU and encoders.
 
   Two yaw-rate gates already existed and neither closed this hole. One stops distance ACCUMULATING while turning; the other stops heading FUSING when the yaw rate is high at the instant of the fix. Between them a robot can drive straight, turn, then drive straight again, and fuse on the third leg while the reference position is still from before the turn. `atan2(dy, dx)` then returns the chord across an L-shaped path rather than the heading of either leg.
