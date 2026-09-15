@@ -1,6 +1,6 @@
 {
  "_note": "Per-sequence reference for the NCLT regression checker (tools/check_benchmark_regression.py). NOT the published table. FusionCore ATE RMSE in metres, SE3-aligned to RTK ground truth, regenerated from a run's results/metrics.json via tools/evaluate.py --json.",
- "_status": "MEASURED 2026-09-13/14 on bcc0e09; re-validated 2026-09-15 on 58d7bac (0.4.0) with the post-outage latch fix. Controls held within 0.7% of baseline on every run, so the comparisons are valid. 2013-04-05 +0.24% and 2012-08-20 +0.45% against baseline, both with controls inside 0.3%. 2012-06-15 measured at n=8: seven runs cluster at mean 72.40 m with a 5.8% spread (baseline 73.53, so -1.5%), and one run came in at 54.24 m. Controls across all eight sat in 18.18-18.52.",
+ "_status": "MEASURED 2026-09-13/14 on bcc0e09; re-validated 2026-09-15 on 58d7bac (0.4.0) with the post-outage latch fix. 2013-04-05 +0.24% and 2012-08-20 +0.45% against baseline, controls inside 0.3%. 2012-06-15 measured at n=8, of which one run is EXCLUDED as contaminated (see that sequence's notes). The five clean runs average 71.51 m with a 3.5% spread. HARNESS RULE learned the hard way here: record the WALL-CLOCK DURATION of every run beside its result. Runs on an idle machine took 55 min and averaged 71.51; runs with the machine in use took 60-61 min and averaged 74.62, a 4.3% swing from background load alone. A run that stalled took 82 min and produced a number 25% off. The filter-rate check does NOT catch this: it is computed from message stamps, so a stalled machine still reports a healthy 99.6 Hz, and it did.",
  "baseline_commit": "bcc0e09",
  "recorded": "2026-09-14",
  "regression_threshold_pct": 10.0,
@@ -17,18 +17,22 @@
    "measured": "2026-09-13",
    "commit": "05f0872",
    "note": "Issue #63, one 461 s blackout. Post-blackout recovery went 277 m (no fix) to 111 m (recovery only, continuity gate armed) to 13 m once the continuity history was stopped from spanning the gap. Continuity rejections after the blackout: 18-20 running to the end of the run, down to 1.",
-   "spread_warning": "n=8 on 58d7bac: 74.95, 54.24, 74.29, 70.92, 71.31, 70.86, 71.14, 73.34. Normal spread is 5.8% across seven of eight, so a move under ~8% on this sequence is NOT evidence of anything. Roughly one run in eight drops ~25% below the cluster (54.24 here); the cluster is 4 m wide and that run sits 18 m below it, so it is a distinct rare event rather than a tail. See #133. An earlier note claiming a 27.6% spread was computed from n=2 where one sample was that outlier, and is withdrawn.",
-   "measured_spread_pct": 5.8,
-   "repeats": [
-    74.95,
-    54.24,
-    74.29,
+   "spread_warning": "n=8 on 58d7bac. EXCLUDE the 54.24 m run: its playback took 82 min where every other run of this sequence took 55-61, the machine was suspended partway through. Not a gate flip (2 chi2 / 7 jump rejections vs 3 / 6 on a clean run) and not a truncated recording (329591 points vs a 330600 average), mechanism unidentified. Clean runs on an idle machine: 70.92, 71.31, 70.86, 71.14, 73.34, mean 71.51, spread 3.5%. With the machine in use: 74.95, 74.29. So a move under ~5% on this sequence is not evidence of anything unless both runs had comparable wall-clock duration. Earlier notes claiming a 27.6% and then a 5.8% spread are both withdrawn; the first was computed from n=2 where one sample was the contaminated run.",
+   "measured_spread_pct": 3.5,
+   "repeats_clean": [
     70.92,
     71.31,
     70.86,
     71.14,
     73.34
-   ]
+   ],
+   "repeats_machine_busy": [
+    74.95,
+    74.29
+   ],
+   "repeats_excluded": {
+    "54.24": "82 min playback, machine suspended mid-run"
+   }
   },
   "2012-08-20": {
    "fusioncore_ate_rmse_3d": 116.444,
