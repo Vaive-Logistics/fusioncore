@@ -1,6 +1,6 @@
 {
  "_note": "Per-sequence reference for the NCLT regression checker (tools/check_benchmark_regression.py). NOT the published table. FusionCore ATE RMSE in metres, SE3-aligned to RTK ground truth, regenerated from a run's results/metrics.json via tools/evaluate.py --json.",
- "_status": "MEASURED 2026-09-13/14 on bcc0e09. Controls sat within 0.7% of baseline, so those comparisons are valid. WARNING added 2026-09-14 after the latch-fix regression run (a06f3cd): the earlier claim that repeats within a configuration are tight on ALL THREE sequences is WRONG for 2012-06-15. Two runs of identical code gave FC 74.95 m and 54.24 m, 27.6% apart, while the RL control between them moved only 1.6% and both ran at healthy rate (99.8 and 99.6 Hz). Treat any single 2012-06-15 number as unusable in either direction until the n=5 spread study lands. 2013-04-05 and 2012-08-20 still repeat tightly (0.24% and 0.45% on this run, controls 0.27% and 0.17%).",
+ "_status": "MEASURED 2026-09-13/14 on bcc0e09; re-validated 2026-09-15 on 58d7bac (0.4.0) with the post-outage latch fix. Controls held within 0.7% of baseline on every run, so the comparisons are valid. 2013-04-05 +0.24% and 2012-08-20 +0.45% against baseline, both with controls inside 0.3%. 2012-06-15 measured at n=8: seven runs cluster at mean 72.40 m with a 5.8% spread (baseline 73.53, so -1.5%), and one run came in at 54.24 m. Controls across all eight sat in 18.18-18.52.",
  "baseline_commit": "bcc0e09",
  "recorded": "2026-09-14",
  "regression_threshold_pct": 10.0,
@@ -17,7 +17,18 @@
    "measured": "2026-09-13",
    "commit": "05f0872",
    "note": "Issue #63, one 461 s blackout. Post-blackout recovery went 277 m (no fix) to 111 m (recovery only, continuity gate armed) to 13 m once the continuity history was stopped from spanning the gap. Continuity rejections after the blackout: 18-20 running to the end of the run, down to 1.",
-   "spread_warning": "Two runs on a06f3cd: 74.95 and 54.24 m (27.6% apart). Do not update this baseline or claim a change on this sequence from a single run."
+   "spread_warning": "n=8 on 58d7bac: 74.95, 54.24, 74.29, 70.92, 71.31, 70.86, 71.14, 73.34. Normal spread is 5.8% across seven of eight, so a move under ~8% on this sequence is NOT evidence of anything. Roughly one run in eight drops ~25% below the cluster (54.24 here); the cluster is 4 m wide and that run sits 18 m below it, so it is a distinct rare event rather than a tail. See #133. An earlier note claiming a 27.6% spread was computed from n=2 where one sample was that outlier, and is withdrawn.",
+   "measured_spread_pct": 5.8,
+   "repeats": [
+    74.95,
+    54.24,
+    74.29,
+    70.92,
+    71.31,
+    70.86,
+    71.14,
+    73.34
+   ]
   },
   "2012-08-20": {
    "fusioncore_ate_rmse_3d": 116.444,
