@@ -546,6 +546,36 @@ enum class EncoderRejectionReason {
   CHI2_FAILED   = 2,  // Mahalanobis distance > outlier_threshold_enc
 };
 
+// Why an IMU update was rejected (or ACCEPTED if it passed).
+//
+// Three separate gates share imu_outliers_, so the count alone cannot say which
+// channel fired. They fail for different reasons and point at different
+// parameters: the rate gate at a noisy gyro or accelerometer, the roll/pitch
+// gate at a tilted or vibrating mount, the orientation gate at a 9-axis IMU
+// disagreeing with the filter's own attitude. Telling them apart is the whole
+// point of recording a reason rather than a number. See #124.
+enum class ImuRejectionReason {
+  NOT_PROCESSED    = 0,
+  ACCEPTED         = 1,
+  CHI2_RATE        = 2,  // gyro + accel, outlier_threshold_imu
+  CHI2_ROLL_PITCH  = 3,  // tilt from gravity, outlier_threshold_imu
+  CHI2_ORIENTATION = 4,  // full quaternion, outlier_threshold_imu
+};
+
+// Why a VSLAM pose update was rejected (or ACCEPTED if it passed).
+enum class VslamRejectionReason {
+  NOT_PROCESSED = 0,
+  ACCEPTED      = 1,
+  CHI2_FAILED   = 2,  // Mahalanobis distance > outlier_threshold_vslam
+};
+
+// Why a GNSS heading update was rejected (or ACCEPTED if it passed).
+enum class HeadingRejectionReason {
+  NOT_PROCESSED = 0,
+  ACCEPTED      = 1,
+  CHI2_FAILED   = 2,  // Mahalanobis distance > outlier_threshold_hdg
+};
+
 // Why a magnetometer reading was rejected (or ACCEPTED if it passed).
 enum class MagRejectionReason {
   NOT_PROCESSED    = 0,
@@ -631,6 +661,15 @@ struct FusionCoreStatus {
   EncoderRejectionReason encoder_reason = EncoderRejectionReason::NOT_PROCESSED;
   double encoder_chi2           = -1.0;
   double encoder_chi2_threshold = 0.0;
+  // Same treatment for the other gates: the reason that fired and how surprising
+  // the measurement was, so a climbing outlier count can be explained instead of
+  // guessed at. -1.0 chi2 means the gate did not run. See #124.
+  ImuRejectionReason     imu_reason     = ImuRejectionReason::NOT_PROCESSED;
+  double                 imu_chi2                 = -1.0;
+  VslamRejectionReason   vslam_reason   = VslamRejectionReason::NOT_PROCESSED;
+  double                 vslam_chi2               = -1.0;
+  HeadingRejectionReason heading_reason = HeadingRejectionReason::NOT_PROCESSED;
+  double                 heading_chi2             = -1.0;
   // Median of (filter yaw - GPS track bearing) in degrees over recent straight
   // segments, and how many segments went into it. Only populated while an
   // absolute heading source is in charge, which is when nothing else is checking
@@ -1157,6 +1196,12 @@ private:
   // Outcome of the most recent encoder update (see EncoderRejectionReason).
   EncoderRejectionReason encoder_reason_ = EncoderRejectionReason::NOT_PROCESSED;
   double encoder_chi2_ = -1.0;
+  ImuRejectionReason     imu_reason_     = ImuRejectionReason::NOT_PROCESSED;
+  double                 imu_chi2_       = -1.0;
+  VslamRejectionReason   vslam_reason_   = VslamRejectionReason::NOT_PROCESSED;
+  double                 vslam_chi2_     = -1.0;
+  HeadingRejectionReason heading_reason_ = HeadingRejectionReason::NOT_PROCESSED;
+  double                 heading_chi2_   = -1.0;
 
   // Continuity threshold learned from the receiver (see GnssParams::continuity_auto).
   //

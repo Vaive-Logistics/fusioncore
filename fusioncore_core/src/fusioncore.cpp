@@ -143,6 +143,12 @@ void FusionCore::init(const State& initial_state, double timestamp_seconds) {
   post_outage_unconfirmed_ = false;
   gnss_consecutive_accepts_ = 0;
   encoder_reason_       = EncoderRejectionReason::NOT_PROCESSED;
+  imu_reason_           = ImuRejectionReason::NOT_PROCESSED;
+  imu_chi2_             = -1.0;
+  vslam_reason_         = VslamRejectionReason::NOT_PROCESSED;
+  vslam_chi2_           = -1.0;
+  heading_reason_       = HeadingRejectionReason::NOT_PROCESSED;
+  heading_chi2_         = -1.0;
   encoder_chi2_         = -1.0;
   cont_learn_max_       = 0.0;
   cont_learn_n_         = 0;
@@ -236,6 +242,12 @@ void FusionCore::reset() {
   post_outage_unconfirmed_ = false;
   gnss_consecutive_accepts_ = 0;
   encoder_reason_       = EncoderRejectionReason::NOT_PROCESSED;
+  imu_reason_           = ImuRejectionReason::NOT_PROCESSED;
+  imu_chi2_             = -1.0;
+  vslam_reason_         = VslamRejectionReason::NOT_PROCESSED;
+  vslam_chi2_           = -1.0;
+  heading_reason_       = HeadingRejectionReason::NOT_PROCESSED;
+  heading_chi2_         = -1.0;
   encoder_chi2_         = -1.0;
   cont_learn_max_       = 0.0;
   cont_learn_n_         = 0;
@@ -653,13 +665,16 @@ void FusionCore::update_imu(
     sensors::ImuMeasurement innovation_pre;
     sensors::ImuNoiseMatrix S;
     ukf_.predict_measurement<sensors::IMU_DIM>(z, h_imu, R, innovation_pre, S);
+    imu_chi2_ = innovation_pre.dot(S.ldlt().solve(innovation_pre));
     if (is_outlier<sensors::IMU_DIM>(innovation_pre, S, config_.outlier_threshold_imu)) {
       ++imu_outliers_;
+      imu_reason_ = ImuRejectionReason::CHI2_RATE;
       last_imu_time_ = timestamp_seconds;
       return;
     }
   }
 
+  imu_reason_ = ImuRejectionReason::ACCEPTED;
   auto innovation = ukf_.update<sensors::IMU_DIM>(z, h_imu, R);
 
   last_imu_innovation_norm_ = innovation.norm();
@@ -752,13 +767,16 @@ void FusionCore::update_imu_orientation(
       sensors::ImuRPNoiseMatrix  S;
       ukf_.predict_measurement<sensors::IMU_RP_DIM>(
         z_rp, sensors::imu_rp_measurement_function, R_rp, innovation_pre, S);
+      imu_chi2_ = innovation_pre.dot(S.ldlt().solve(innovation_pre));
       if (is_outlier<sensors::IMU_RP_DIM>(innovation_pre, S, config_.outlier_threshold_imu)) {
         ++imu_outliers_;
+        imu_reason_ = ImuRejectionReason::CHI2_ROLL_PITCH;
         last_imu_time_ = timestamp_seconds;
         return;
       }
     }
 
+    imu_reason_ = ImuRejectionReason::ACCEPTED;
     ukf_.update<sensors::IMU_RP_DIM>(z_rp, sensors::imu_rp_measurement_function, R_rp);
 
   } else {
@@ -775,14 +793,17 @@ void FusionCore::update_imu_orientation(
       sensors::ImuOrientationNoiseMatrix S;
       ukf_.predict_measurement<sensors::IMU_ORIENTATION_DIM>(
         z, sensors::imu_orientation_measurement_function, R, innovation_pre, S);
+      imu_chi2_ = innovation_pre.dot(S.ldlt().solve(innovation_pre));
       if (is_outlier<sensors::IMU_ORIENTATION_DIM>(innovation_pre, S, config_.outlier_threshold_imu)) {
         ++imu_outliers_;
+        imu_reason_ = ImuRejectionReason::CHI2_ORIENTATION;
         last_imu_time_ = timestamp_seconds;
         return;
       }
     }
 
     constexpr unsigned int IMU_ORIENT_ANGLE_DIMS = 0b100;  // bit 2 = yaw
+    imu_reason_ = ImuRejectionReason::ACCEPTED;
     auto imu_orient_innovation = ukf_.update<sensors::IMU_ORIENTATION_DIM>(
       z, sensors::imu_orientation_measurement_function, R, IMU_ORIENT_ANGLE_DIMS);
 
@@ -1894,12 +1915,15 @@ bool FusionCore::update_gnss_heading(
     sensors::GnssHdgNoiseMatrix S;
     ukf_.predict_measurement<sensors::GNSS_HDG_DIM>(
       z, sensors::gnss_hdg_measurement_function, R, innovation_pre, S, HDG_ANGLE_DIMS);
+    heading_chi2_ = innovation_pre.dot(S.ldlt().solve(innovation_pre));
     if (is_outlier<sensors::GNSS_HDG_DIM>(innovation_pre, S, config_.outlier_threshold_hdg)) {
       ++hdg_outliers_;
+      heading_reason_ = HeadingRejectionReason::CHI2_FAILED;
       return false;
     }
   }
 
+  heading_reason_ = HeadingRejectionReason::ACCEPTED;
   ukf_.update<sensors::GNSS_HDG_DIM>(
     z, sensors::gnss_hdg_measurement_function, R, HDG_ANGLE_DIMS);
 
@@ -2004,6 +2028,12 @@ FusionCoreStatus FusionCore::get_status() const {
   status.encoder_reason          = encoder_reason_;
   status.encoder_chi2            = encoder_chi2_;
   status.encoder_chi2_threshold  = config_.outlier_threshold_enc;
+  status.imu_reason              = imu_reason_;
+  status.imu_chi2                = imu_chi2_;
+  status.vslam_reason            = vslam_reason_;
+  status.vslam_chi2              = vslam_chi2_;
+  status.heading_reason          = heading_reason_;
+  status.heading_chi2            = heading_chi2_;
   status.zupt_accel_std       = accel_magnitude_std();
   status.zupt_blocked_by_imu  = zupt_blocked_by_imu_;
   status.heading_vs_track_deg = xchk_median_deg();
@@ -2098,12 +2128,15 @@ bool FusionCore::update_pose(
         sensors::VslamPoseNoiseMatrix S;
         ukf_.predict_measurement<sensors::VSLAM_POSE_DIM>(
           z, sensors::vslam_pose_measurement_function, R, innov_pre, S, VSLAM_ANGLE_DIMS);
+        vslam_chi2_ = innov_pre.dot(S.ldlt().solve(innov_pre));
         if (is_outlier<sensors::VSLAM_POSE_DIM>(innov_pre, S, config_.outlier_threshold_vslam)) {
           ++vslam_outliers_;
+          vslam_reason_ = VslamRejectionReason::CHI2_FAILED;
           return;
         }
       }
 
+      vslam_reason_ = VslamRejectionReason::ACCEPTED;
       auto innovation = ukf_.update<sensors::VSLAM_POSE_DIM>(
         z, sensors::vslam_pose_measurement_function, R, VSLAM_ANGLE_DIMS);
       adapt_R<sensors::VSLAM_POSE_DIM>(R_vslam_, R_vslam_floor_, vslam_innovations_, innovation, false);
@@ -2132,12 +2165,15 @@ bool FusionCore::update_pose(
     sensors::VslamPoseNoiseMatrix S;
     ukf_.predict_measurement<sensors::VSLAM_POSE_DIM>(
       z, sensors::vslam_pose_measurement_function, R, innov_pre, S, VSLAM_ANGLE_DIMS);
+    vslam_chi2_ = innov_pre.dot(S.ldlt().solve(innov_pre));
     if (is_outlier<sensors::VSLAM_POSE_DIM>(innov_pre, S, config_.outlier_threshold_vslam)) {
       ++vslam_outliers_;
+      vslam_reason_ = VslamRejectionReason::CHI2_FAILED;
       return false;
     }
   }
 
+  vslam_reason_ = VslamRejectionReason::ACCEPTED;
   auto innovation = ukf_.update<sensors::VSLAM_POSE_DIM>(
     z, sensors::vslam_pose_measurement_function, R, VSLAM_ANGLE_DIMS);
   adapt_R<sensors::VSLAM_POSE_DIM>(R_vslam_, R_vslam_floor_, vslam_innovations_, innovation, false);

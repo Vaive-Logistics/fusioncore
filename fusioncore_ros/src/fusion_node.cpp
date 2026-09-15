@@ -882,6 +882,33 @@ public:
       "FusionCore configured. base_frame=%s odom_frame=%s rate=%.0fHz",
       base_frame_.c_str(), odom_frame_.c_str(), publish_rate_);
 
+    // Say which node name the parameters were matched against, and print a few
+    // whose defaults nobody should be running outdoors.
+    //
+    // A ROS 2 params file is keyed by node name. If the running node is not
+    // called what the YAML says, the whole file is ignored and every setting
+    // silently falls back to its library default. Nothing errors, and
+    // `ros2 param get` returns the default as though it were configured, so the
+    // usual way of checking agrees with you.
+    //
+    // It does not degrade gracefully either. The two defaults below are the two
+    // worst configurations this project has measured: imu.accel_noise 0.1 tells
+    // the filter to trust an accelerometer reading several m/s^2 of chassis
+    // vibration, which drew 53 m of path against 27.73 m actually travelled, and
+    // gnss.max_hdop 4.0 compared against a synthesised DOP in metres rejected
+    // 500 of 500 fixes on a u-blox M9N. Anyone who namespaces or renames the node
+    // can land on both at once. Printing the name beside the values lets a user
+    // spot the mismatch in one line instead of debugging the filter. See #134.
+    RCLCPP_INFO(get_logger(),
+      "Parameters matched against node '%s' in namespace '%s'. If your YAML is "
+      "keyed to a different name, none of it applied: imu.accel_noise=%.4g "
+      "gnss.max_hdop=%.4g gnss.base_noise_xy=%.4g imu.gyro_noise=%.4g",
+      get_name(), get_namespace(),
+      get_parameter("imu.accel_noise").as_double(),
+      get_parameter("gnss.max_hdop").as_double(),
+      get_parameter("gnss.base_noise_xy").as_double(),
+      get_parameter("imu.gyro_noise").as_double());
+
     // Say out loud what the output frame's yaw is referenced to. The filter's
     // state is local ENU (x=east, y=north), so with a 9-axis IMU the output is
     // world-referenced from the first message, while wheel odometry uses
@@ -3007,6 +3034,42 @@ private:
     return "unknown";
   }
 
+  // Three gates share imu_outliers, so the count cannot say which one fired.
+  // They point at different parameters: rate at a noisy gyro or accelerometer,
+  // roll/pitch at a tilted or vibrating mount, orientation at a 9-axis IMU
+  // disagreeing with the filter's own attitude. See #124.
+  static const char * imu_reason_str(fusioncore::ImuRejectionReason r)
+  {
+    switch (r) {
+      case fusioncore::ImuRejectionReason::NOT_PROCESSED:    return "NOT_PROCESSED";
+      case fusioncore::ImuRejectionReason::ACCEPTED:         return "ACCEPTED";
+      case fusioncore::ImuRejectionReason::CHI2_RATE:        return "CHI2_RATE";
+      case fusioncore::ImuRejectionReason::CHI2_ROLL_PITCH:  return "CHI2_ROLL_PITCH";
+      case fusioncore::ImuRejectionReason::CHI2_ORIENTATION: return "CHI2_ORIENTATION";
+    }
+    return "unknown";
+  }
+
+  static const char * vslam_reason_str(fusioncore::VslamRejectionReason r)
+  {
+    switch (r) {
+      case fusioncore::VslamRejectionReason::NOT_PROCESSED: return "NOT_PROCESSED";
+      case fusioncore::VslamRejectionReason::ACCEPTED:      return "ACCEPTED";
+      case fusioncore::VslamRejectionReason::CHI2_FAILED:   return "CHI2_FAILED";
+    }
+    return "unknown";
+  }
+
+  static const char * heading_reason_str(fusioncore::HeadingRejectionReason r)
+  {
+    switch (r) {
+      case fusioncore::HeadingRejectionReason::NOT_PROCESSED: return "NOT_PROCESSED";
+      case fusioncore::HeadingRejectionReason::ACCEPTED:      return "ACCEPTED";
+      case fusioncore::HeadingRejectionReason::CHI2_FAILED:   return "CHI2_FAILED";
+    }
+    return "unknown";
+  }
+
   static const char * heading_source_str(fusioncore::HeadingSource src)
   {
     switch (src) {
@@ -3449,7 +3512,9 @@ private:
     diag_array.status.push_back(make_status("IMU",
       health_to_level(status.imu_health),
       health_to_str(status.imu_health),
-      {{"outlier_count", std::to_string(status.imu_outliers)}}));
+      {{"outlier_count",  std::to_string(status.imu_outliers)},
+       {"last_reason",    imu_reason_str(status.imu_reason)},
+       {"last_chi2",      std::to_string(status.imu_chi2)}}));
 
     // Encoder
     diag_array.status.push_back(make_status("Encoder",
@@ -3461,15 +3526,19 @@ private:
     diag_array.status.push_back(make_status("GNSS",
       health_to_level(status.gnss_health),
       health_to_str(status.gnss_health),
-      {{"outlier_count",     std::to_string(status.gnss_outliers)},
-       {"heading_outliers",  std::to_string(status.hdg_outliers)}}));
+      {{"outlier_count",        std::to_string(status.gnss_outliers)},
+       {"heading_outliers",     std::to_string(status.hdg_outliers)},
+       {"heading_last_reason",  heading_reason_str(status.heading_reason)},
+       {"heading_last_chi2",    std::to_string(status.heading_chi2)}}));
 
     // VSLAM (only shown when configured)
     if (!vslam_topic_.empty()) {
       diag_array.status.push_back(make_status("VSLAM",
         health_to_level(status.vslam_health),
         health_to_str(status.vslam_health),
-        {{"outlier_count", std::to_string(status.vslam_outliers)}}));
+        {{"outlier_count", std::to_string(status.vslam_outliers)},
+         {"last_reason",   vslam_reason_str(status.vslam_reason)},
+         {"last_chi2",     std::to_string(status.vslam_chi2)}}));
     }
 
     // Magnetometer (only shown when configured)
