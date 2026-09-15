@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased]
+## [0.4.0]: 2026-09-14
 
 This is the 0.4.0 candidate rather than a patch release. Two public fields were
 removed from `FusionCoreConfig`, so code that sets them directly against
@@ -46,6 +46,20 @@ section before upgrading; nothing else in the release needs action.
   set either struct field will need to delete those lines. Closes #114.
 
 ### Added
+
+- **CI now catches a ROS parameter that never reaches the filter.** A parameter can
+  be declared, documented, set in a shipped config and silently do nothing: the node
+  accepts it, `ros2 param get` echoes it back, and no code reads it. Two had already
+  slipped through that way (#114). `tools/check_config_wiring.py` extracts every
+  `config.<field> = ... get_parameter("<name>")` pair from `fusion_node.cpp` and fails
+  if the field is never read by `fusioncore_core`, matching on the field rather than the
+  parameter name so a deliberately renamed mapping is handled. Comments are stripped
+  before counting, or a field named in its own doc comment would look used. Run against
+  the tree immediately before #114 it reports exactly the two dead mappings removed there,
+  which is what makes it trustworthy rather than merely green. It reports its own scope
+  honestly: 76 of 141 declared parameters map into `FusionCoreConfig`, and the 65 that
+  reach the node directly are not covered (#131 tracks that half). Contributed by
+  Rayan-and-beyond. Closes #127.
 
 - **Post-blackout GNSS re-acquisition.** The largest behavioural change in this
   release and the reason for the version bump. See Fixed below for the mechanism
@@ -207,6 +221,23 @@ section before upgrading; nothing else in the release needs action.
   near a badly drifted estimate passes, corrects nothing, and used to disarm
   recovery for the rest of the run: on one log, 1 accepted against 1999 rejected
   and 690 m out. Recovery now stays armed until several fixes in a row are accepted.
+
+- **A GNSS blackout no longer disables spike rejection for the rest of the run.**
+  `post_outage_unconfirmed_` is a latch: the first rejection cascade following a real
+  gap sets it, and it should clear once several fixes in a row are accepted. The code
+  that cleared it sat inside `reset()`, eleven lines below the line zeroing its own
+  counter, so it never ran on an accepted fix and the latch never cleared. Every later
+  cascade then counted as "this follows a gap" even when the receiver had never left,
+  which unlocks the recovery inflation on a continuous outlier: exactly what
+  `gnss.coast_min_gap_s` exists to prevent, re-opened by an outage minutes earlier.
+
+  Measured on a blackout, clean recovery to 0.04 m, then a sustained 300 m offset with
+  the fix cadence never interrupted. Before, the filter rejected 15 and then accepted
+  the remaining **586 of 601**, ending **299.97 m** out, sitting on the spike. After,
+  it rejects **601 of 601** and ends 25.39 m out, which is dead reckoning for the 120 s
+  window. In plain terms: driving under a bridge used to disable the defence against
+  multipath off a building for the rest of that run. `BlackoutDoesNotUnlockRecoveryForALaterSpike`
+  pins it and fails by 299.97 m without the fix. Closes #132.
 
 - **No more inventing a DOP in order to gate on it, and no more blaming
   `min_satellites` for rejections it did not cause.** When a driver supplies no DOP,
