@@ -1,6 +1,6 @@
 {
  "_note": "Per-sequence reference for the NCLT regression checker (tools/check_benchmark_regression.py). NOT the published table. FusionCore ATE RMSE in metres, SE3-aligned to RTK ground truth, regenerated from a run's results/metrics.json via tools/evaluate.py --json.",
- "_status": "MEASURED 2026-09-13/14 on bcc0e09; re-validated 2026-09-15 on 58d7bac (0.4.0) with the post-outage latch fix. 2013-04-05 +0.24% and 2012-08-20 +0.45% against baseline, controls inside 0.3%. 2012-06-15 measured at n=8, of which one run is EXCLUDED as contaminated (see that sequence's notes). The five clean runs average 71.51 m with a 3.5% spread. HARNESS RULE learned the hard way here: record the WALL-CLOCK DURATION of every run beside its result. Runs on an idle machine took 55 min and averaged 71.51; runs with the machine in use took 60-61 min and averaged 74.62, a 4.3% swing from background load alone. A run that stalled took 82 min and produced a number 25% off. The filter-rate check does NOT catch this: it is computed from message stamps, so a stalled machine still reports a healthy 99.6 Hz, and it did.",
+ "_status": "MEASURED 2026-09-13/14 on bcc0e09; re-measured 2026-09-15 on 58d7bac (0.4.0). RUN-TO-RUN VARIANCE IS REAL AND IT IS FUSIONCORE'S, NOT THE HARNESS'S. Measured spreads of FusionCore against the RL control on identical input: 2013-04-05 0.17% vs control 0.47% (n=2); 2012-08-20 4.57% vs control 0.00% (n=2); 2012-06-15 5.8% vs control 1.9% (n=7). The control being identical to two decimal places on 2012-08-20 is what rules out the input. A 'background machine load is worth 4.3%' claim written here earlier on 2026-09-15 is WITHDRAWN: idle re-runs moved 2013-04-05 by 0.17% and made 2012-08-20 4.6% WORSE, both wrong for that theory. It came from treating a 2-sample group as a measurement. UNEXPLAINED. Do not propose a mechanism without more n. Untested observation: the two sequences with several percent of variance are the two long-blackout ones, and the one with almost none has the shortest outages. PRACTICAL RULE: a move under ~6% on 2012-06-15 or 2012-08-20 is not evidence of anything. 2013-04-05 repeats tightly enough that ~1% is meaningful there. Always run the RL control and record wall-clock duration beside every result.",
  "baseline_commit": "bcc0e09",
  "recorded": "2026-09-14",
  "regression_threshold_pct": 10.0,
@@ -17,22 +17,17 @@
    "measured": "2026-09-13",
    "commit": "05f0872",
    "note": "Issue #63, one 461 s blackout. Post-blackout recovery went 277 m (no fix) to 111 m (recovery only, continuity gate armed) to 13 m once the continuity history was stopped from spanning the gap. Continuity rejections after the blackout: 18-20 running to the end of the run, down to 1.",
-   "spread_warning": "n=8 on 58d7bac. EXCLUDE the 54.24 m run: its playback took 82 min where every other run of this sequence took 55-61, the machine was suspended partway through. Not a gate flip (2 chi2 / 7 jump rejections vs 3 / 6 on a clean run) and not a truncated recording (329591 points vs a 330600 average), mechanism unidentified. Clean runs on an idle machine: 70.92, 71.31, 70.86, 71.14, 73.34, mean 71.51, spread 3.5%. With the machine in use: 74.95, 74.29. So a move under ~5% on this sequence is not evidence of anything unless both runs had comparable wall-clock duration. Earlier notes claiming a 27.6% and then a 5.8% spread are both withdrawn; the first was computed from n=2 where one sample was the contaminated run.",
-   "measured_spread_pct": 3.5,
+   "spread_warning": "n=7 clean on 58d7bac: 70.86, 70.92, 71.14, 71.31, 73.34, 74.29, 74.95. Spread 5.8%, control 1.9%. One further run at 54.24 is EXCLUDED: 82 min playback where every other run took 55-61, machine suspended mid-run; not a gate flip and not a truncated recording, mechanism never identified. A move under ~6% here means nothing.",
    "repeats_clean": [
-    70.92,
-    71.31,
     70.86,
+    70.92,
     71.14,
-    73.34
+    71.31,
+    73.34,
+    74.29,
+    74.95
    ],
-   "repeats_machine_busy": [
-    74.95,
-    74.29
-   ],
-   "repeats_excluded": {
-    "54.24": "82 min playback, machine suspended mid-run"
-   }
+   "measured_spread_pct": 5.8
   },
   "2012-08-20": {
    "fusioncore_ate_rmse_3d": 116.444,
@@ -45,7 +40,12 @@
    "verified": true,
    "measured": "2026-09-14",
    "commit": "bcc0e09",
-   "note": "Issue #64. 120.03 to 116.4, inside the 4.6% spread, so unchanged rather than improved. Its value is as a no-regression check: seven GNSS gaps and an adversarial outlier cluster, and arming the learned continuity gate by default changed nothing. Recovery here was already fine (10 m) because the longest blackout is 228 s and drift only reached 90 m, within what chi2 alone could re-admit."
+   "note": "Issue #64. 120.03 to 116.4, inside the 4.6% spread, so unchanged rather than improved. Its value is as a no-regression check: seven GNSS gaps and an adversarial outlier cluster, and arming the learned continuity gate by default changed nothing. Recovery here was already fine (10 m) because the longest blackout is 228 s and drift only reached 90 m, within what chi2 alone could re-admit.",
+   "spread_warning": "n=2 on 58d7bac: 116.97 (machine in use) and 122.32 (machine idle), 4.57% apart, while the RL control read 10.50 both times, identical. So the variance is the filter's. A move under ~5% here means nothing. Needs more repeats.",
+   "repeats": [
+    116.97,
+    122.32
+   ]
   },
   "2013-04-05": {
    "fusioncore_ate_rmse_3d": 189.7,
@@ -54,7 +54,12 @@
    "verified": true,
    "measured": "2026-09-14",
    "commit": "bcc0e09",
-   "note": "277.6 to 189.7, a 31.7% improvement, reproduced twice (190.028 and 189.388) against two pre-fix runs (275.951 and 279.303), control stable at ~267. This sequence FLIPS from a marginal loss to FusionCore beating RL by 29%. CAUSE, isolated by A/B: not the continuity gate (188.807 with it forced off) but the continuity BUFFER. A buffer spanning a blackout reports mean_dt ~115 s instead of 0.2 s, which feeds min_gap = max(1.0, 2*mean_dt) ~231 s in note_rejection_cascade_start, so any outage SHORTER than that is never classified as a gap and recovery never arms. This sequence has gaps of 275, 129, 65 and 55 s: only the first armed. Recovery after the 129 s gap went 746/750 m to 80/78 m. The 275 s gap is unchanged at ~264 m, which is why the fix first appeared to do nothing here."
+   "note": "277.6 to 189.7, a 31.7% improvement, reproduced twice (190.028 and 189.388) against two pre-fix runs (275.951 and 279.303), control stable at ~267. This sequence FLIPS from a marginal loss to FusionCore beating RL by 29%. CAUSE, isolated by A/B: not the continuity gate (188.807 with it forced off) but the continuity BUFFER. A buffer spanning a blackout reports mean_dt ~115 s instead of 0.2 s, which feeds min_gap = max(1.0, 2*mean_dt) ~231 s in note_rejection_cascade_start, so any outage SHORTER than that is never classified as a gap and recovery never arms. This sequence has gaps of 275, 129, 65 and 55 s: only the first armed. Recovery after the 129 s gap went 746/750 m to 80/78 m. The 275 s gap is unchanged at ~264 m, which is why the fix first appeared to do nothing here.",
+   "spread_warning": "n=2 on 58d7bac: 190.15 and 190.47, 0.17% apart, control 267.42 and 268.68. This sequence repeats tightly, so ~1% is meaningful here where it would be noise on the other two.",
+   "repeats": [
+    190.15,
+    190.47
+   ]
   }
  },
  "_read_this_before_judging_any_regression": "The 9x run-to-run spread is NOT universal, which an earlier note here implied. Measured over six unattended runs on 2026-09-12: 2012-06-15 repeats to 2.8%, 2012-08-20 to 4.6%, 2013-04-05 to 1.2%. The historical 32 m to 345 m range was all one sequence, 2013-04-05, and got generalised. So on these sequences a 5 to 10 percent change IS measurable and two runs are enough to see it. Keep the caution for a sequence whose spread has not been measured, and re-check it when adding one. robot_localization remains the control: if it moves more than about a percent between runs, the comparison is void whatever FusionCore did, and that check has already caught one wrong diagnosis (see issue #119)."
