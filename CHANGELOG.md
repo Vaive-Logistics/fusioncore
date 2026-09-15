@@ -6,6 +6,39 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Every sensor gate now records why it rejected, not just that it did.** The GNSS and
+  encoder paths already did; the remaining six sites incremented a counter and threw the
+  measurement away. The IMU case is why a counter is not enough: three separate gates share
+  `imu_outliers`, and they fail for different reasons and point at different parameters, so
+  "47 outliers" is a number you cannot act on. `ImuRejectionReason` distinguishes
+  `CHI2_RATE` (gyro and accelerometer), `CHI2_ROLL_PITCH` (tilt from gravity) and
+  `CHI2_ORIENTATION` (the full quaternion), alongside new `VslamRejectionReason` and
+  `HeadingRejectionReason`. Each site also records the Mahalanobis distance the way the
+  encoder path does, so a marginal rejection is distinguishable from a wild one, and all
+  three surface in the diagnostics that already carried the counts. Closes #124.
+
+- **The node says which node name your parameters were matched against.** A ROS 2 params
+  file is keyed by node name, so if the running node is not called what the YAML says, the
+  entire file is ignored and every setting falls back to its library default. Nothing
+  errors, and `ros2 param get` returns the default as though it were configured, so the
+  usual way of checking agrees with you.
+
+  It does not degrade gracefully either. Two of the defaults it restores are the worst
+  settings this project has measured: `imu.accel_noise` at 0.1 tells the filter to trust an
+  accelerometer reading several m/s^2 of chassis vibration, which drew 53 m of path against
+  27.73 m actually travelled, and `gnss.max_hdop` at 4.0 compared against a synthesised DOP
+  in metres rejected 500 of 500 fixes on a u-blox M9N. Anyone who namespaces or renames the
+  node lands on both at once.
+
+  So `on_configure` now logs the resolved node name and namespace together with four
+  parameters nobody should be running at their defaults in the field. Wrong name and you see
+  `imu.accel_noise=0.1 gnss.max_hdop=4`; right name and you see `50` and `25`. One line, no
+  behaviour change. Closes #134.
+
 ## [0.4.0]: 2026-09-14
 
 This is the 0.4.0 candidate rather than a patch release. Two public fields were
