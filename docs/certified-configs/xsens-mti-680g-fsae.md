@@ -112,12 +112,14 @@ fusioncore:
     # Coast mode: for GPS-denied sections (tunnel, underground pit area).
     gnss.coast_n: 3
     gnss.coast_q_factor: 10.0
-    gnss.coast_timeout_s: 10.0      # tighter than default: race cars move fast
+    gnss.coast_timeout_s: 10.0      # ENABLES timeout coast; the default 0.0 is OFF.
+                                    # Catches a receiver going silent, where no fixes
+                                    # arrive to be rejected and coast_n never trips.
 
     # KISS-ICP VSLAM: provides absolute pose during GPS-denied sections.
     # Uncomment and set to your actual KISS-ICP output topic.
     # vslam.topic: "/kiss_icp/odometry"
-    # vslam.pose_noise: 0.05
+    # vslam.position_noise: 0.05
 
     adaptive.imu: true
     adaptive.encoder: true

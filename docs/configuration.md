@@ -304,7 +304,7 @@ fusioncore:
     # the bearing changes too quickly for a reliable heading measurement.
     # Decrease for robots that make tight turns at slow speed.
 
-    gnss.gps_track_heading_cross_check_deg: 15.0
+    gnss.track_heading_cross_check_deg: 15.0
     # Reject a GPS track heading that disagrees with the current heading estimate
     # by more than this, measured as the median of recent disagreements rather
     # than a single sample so one bad bearing cannot veto a good source. Course

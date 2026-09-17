@@ -85,17 +85,27 @@ This is exact replay, not approximation. The same sigma points are re-propagated
 # Handles any delay up to 1 second automatically
 ```
 
-The buffer is always active. No parameters to set unless you want to adjust the buffer size:
+The buffer is always active and **there is nothing to configure from ROS.**
 
-```yaml
-imu.buffer_duration: 1.0   # seconds; increase if GPS delays exceed 1s
+The size is a COUNT of IMU messages, not a duration: `imu_buffer_size`, default 100,
+and it is a `FusionCoreConfig` field rather than a ROS parameter. That means the
+delay it covers depends on your IMU rate:
+
+```
+delay covered  =  imu_buffer_size / IMU rate
+
+  100 messages at 400 Hz  ->  0.25 s
+  100 messages at 100 Hz  ->  1.0 s
+  100 messages at  20 Hz  ->  5.0 s
 ```
 
-For zero-stamped GPS messages, FusionCore uses wall clock as fallback:
+So "one second" is only true at 100 Hz. Work out your own number before relying on
+it. Changing it requires linking `fusioncore_core` directly; it cannot be set from a
+params file.
 
-```yaml
-gnss.use_wall_clock_stamp: true   # use /clock if stamp=0
-```
+Zero-stamped GPS is handled **automatically**, with no parameter. When a driver
+publishes a fix with a zero stamp, FusionCore falls back to the receive time rather
+than treating it as an ancient measurement.
 
 ---
 

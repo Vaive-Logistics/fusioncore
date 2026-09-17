@@ -58,7 +58,14 @@ colcon test --packages-select fusioncore_core
 colcon test-result --verbose
 ```
 
-Expected: `114 tests, 0 errors, 0 failures, 0 skipped`
+Expected: `272 tests, 0 errors, 0 failures, 0 skipped`
+
+That is the figure `colcon test-result --all` prints. It counts each package's CTest
+wrapper entry alongside the individual cases, so it is 27 higher than the number of
+actual test cases. The individual count is 245: 184 in `fusioncore_core`, 37 in
+`fusioncore_ros`, 24 in `fusioncore_ublox`. Both are correct, they answer different
+questions. If your number differs, re-run and compare per package rather than on the
+total, since one skipped suite is easier to spot that way.
 
 ---
 
