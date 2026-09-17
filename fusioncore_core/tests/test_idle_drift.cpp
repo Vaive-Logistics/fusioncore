@@ -309,9 +309,18 @@ TEST(IdleDriftTest, DeadEncodersDoNotFreezeTheEstimate) {
   const double dt = 0.01, g = 9.80665;
   double t = 0.0;
   // The robot really is driving east at 0.5 m/s, but every encoder reads zero.
+  // It also SHAKES, because a robot rolling over ground does. Measured on six
+  // 2026-09 rover logs the accel-magnitude std is 1.69 to 2.25 m/s^2 driving
+  // against 0.013 to 0.021 parked, and the detector now requires that evidence
+  // before calling the wheels liars. A perfectly still accelerometer on a
+  // moving robot is not a robot this test should be describing.
   for (int step = 1; step * dt <= 40.0 + 1e-9; ++step) {
     t = step * dt;
-    fc.update_imu(t, 0, 0, 0, 0, 0, g);
+    // On the gravity axis. The published figure is the std of accelerometer
+    // MAGNITUDE, and a 2 m/s^2 wobble sideways of a 9.81 vector barely changes
+    // its length, so shaking in y would not describe a robot that is rolling.
+    const double shake = 2.0 * std::sin(37.0 * t);
+    fc.update_imu(t, 0, 0, 0, 0, 0, g + shake);
     if (step % 2 == 0) {
       fc.update_encoder(t, 0.0, 0.0, 0.0);     // the lie
       fc.update_zupt(t, 0.01);                 // which ZUPT believes
@@ -326,6 +335,67 @@ TEST(IdleDriftTest, DeadEncodersDoNotFreezeTheEstimate) {
   EXPECT_GT(fc.get_state().x[X], 8.0)
     << "the estimate stayed put while the robot drove 20 m. It reached only "
     << fc.get_state().x[X] << " m, which is the failure this check exists to stop.";
+}
+
+// ─── The indoor false positive, 2026-09-15 ─────────────────────────────────
+// Indoors the receiver reported sigma_xy 14 m, so two consecutive fixes sat 6 m
+// apart. That is one segment, and over one segment displacement and path length
+// are the same line, so straightness is exactly 1.00 no matter what the receiver
+// did. The check fired 2.8 s after the first fix of the run, announced that the
+// wheel odometry was lying, and disabled ZUPT and the parked-GNSS suppression
+// for the rest of the run. The robot was sitting on a table.
+TEST(IdleDriftTest, TwoFixesAreNotEvidenceOfAnything) {
+  FusionCore fc(idle_config(0.001, 100.0));
+  State s0;
+  fc.init(s0, 0.0);
+
+  const double dt = 0.01, g = 9.80665;
+  int fix_n = 0;
+  for (int step = 1; step * dt <= 12.0 + 1e-9; ++step) {
+    const double t = step * dt;
+    fc.update_imu(t, 0, 0, 0, 0, 0, g);   // dead still, it is on a table
+    if (step % 2 == 0) {
+      fc.update_encoder(t, 0.0, 0.0, 0.0);
+      fc.update_zupt(t, 0.01);
+    }
+    // 1 Hz, and each fix lands 6 m further out: the worst case for this check,
+    // a receiver whose error walks one way under bad indoor geometry.
+    if (step % 100 == 0) fc.update_gnss(t, fix_at(6.0 * (++fix_n), 0.0));
+  }
+
+  const auto st = fc.get_status();
+  EXPECT_FALSE(st.zupt_parked_but_moving)
+    << "a stationary robot was told its wheel odometry was lying, on "
+    << fix_n << " fixes at straightness " << st.zupt_parked_straightness
+    << ". Straightness is 1.00 by construction over one segment.";
+}
+
+// The same shape, but the accelerometer is what saves it. Ten-plus segments of
+// genuinely straight drift satisfy every geometric test the check has, so
+// geometry alone would fire. The robot is still sitting on a table.
+TEST(IdleDriftTest, StraightDriftOnAStillRobotIsNotDeadEncoders) {
+  FusionCore fc(idle_config(0.001, 100.0));
+  State s0;
+  fc.init(s0, 0.0);
+
+  const double dt = 0.01, g = 9.80665;
+  int fix_n = 0;
+  for (int step = 1; step * dt <= 40.0 + 1e-9; ++step) {
+    const double t = step * dt;
+    fc.update_imu(t, 0, 0, 0, 0, 0, g);
+    if (step % 2 == 0) {
+      fc.update_encoder(t, 0.0, 0.0, 0.0);
+      fc.update_zupt(t, 0.01);
+    }
+    if (step % 100 == 0) fc.update_gnss(t, fix_at(1.5 * (++fix_n), 0.0));
+  }
+
+  const auto st = fc.get_status();
+  EXPECT_GE(st.zupt_parked_straightness, 0.85)
+    << "the scenario is meant to be geometrically indistinguishable from real "
+       "motion; if it is not, it is not testing what it claims to";
+  EXPECT_FALSE(st.zupt_parked_but_moving)
+    << "geometry alone fired on a robot whose accelerometer read dead flat";
 }
 
 // ─── And it must NOT fire on a robot that is genuinely parked ───────────────

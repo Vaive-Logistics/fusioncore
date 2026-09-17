@@ -97,6 +97,21 @@ public:
   // Get current state estimate
   const State& state() const { return state_; }
 
+  // Overwrite the orientation quaternion, leaving every other state and the
+  // whole covariance alone. For establishing an attitude the filter never had a
+  // measurement of, as opposed to correcting one it did: see
+  // FusionCore::update_magnetometer, where yaw starts as a fabricated zero and
+  // no amount of fusing can move it, because the gain against P(QZ,QZ) = 1e-8 is
+  // nil. Not a substitute for an update, and it should be rare.
+  void set_orientation(double qw, double qx, double qy, double qz) {
+    const double n = std::sqrt(qw*qw + qx*qx + qy*qy + qz*qz);
+    if (n < 1e-12) return;
+    state_.x[QW] = qw / n;
+    state_.x[QX] = qx / n;
+    state_.x[QY] = qy / n;
+    state_.x[QZ] = qz / n;
+  }
+
   bool is_initialized() const { return initialized_; }
 
   // Scale applied to position diagonal of Q during inertial coast mode.

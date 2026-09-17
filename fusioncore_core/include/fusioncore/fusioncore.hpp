@@ -292,6 +292,23 @@ struct FusionCoreConfig {
   // driving on dead encoders tracks close to 1.0, so 0.85 leaves room on both
   // sides. Note the parked worst case is not small: a receiver whose error
   // drifts one way under changing satellite geometry looks quite straight.
+  //
+  // CORRECTION, 2026-09-15, and it is why this value is no longer trusted on its
+  // own. Those three numbers are each one whole parked window, but the check
+  // runs on every PREFIX of the window as fixes arrive, and short prefixes are
+  // far straighter. Re-measuring every prefix on the same bags, worst parked
+  // straightness at the moment displacement first passes 5 m:
+  //
+  //     6 segments   0.902      17 segments  0.847
+  //     8 segments   0.877      22 segments  0.840
+  //    10 segments   0.880      30 segments  0.811
+  //    13 segments   0.855      38 segments  0.722   <- the old figure
+  //
+  // So 0.85 is breached by a stationary robot anywhere under about 30 segments,
+  // and at one segment the figure is exactly 1.00 by construction. It false
+  // fired three times on 2026-09-15, once indoors 2.8 s after the first fix.
+  // Hence kParkedMotionMinSegments, and hence the accelerometer now has to
+  // agree the robot is moving before the wheels are called liars.
   // Refuse ZUPT when the accelerometer says the robot is moving, however still
   // the wheels claim to be. Standard deviation of accelerometer MAGNITUDE over
   // the last second, in m/s^2. 0 disables the check.
@@ -1014,6 +1031,7 @@ private:
   // Straightness check on the parked fixes, see zupt_parked_motion_m.
   double parked_ref_x_ = 0.0, parked_ref_y_ = 0.0;
   double parked_path_len_ = 0.0;
+  int    parked_seg_n_ = 0;
   bool   parked_moving_detected_ = false;
   double gnss_parked_straightness_ = 0.0;
   double imu_rate_prev_stamp_    = -1.0;
@@ -1227,6 +1245,11 @@ private:
   // One is not enough (see post_outage_unconfirmed_); a handful at any realistic
   // fix rate is under a couple of seconds.
   static constexpr int kAcceptsToConfirmReacquisition = 3;
+
+  // Fix-to-fix segments needed before the parked straightness figure means
+  // anything. With one segment it is exactly 1.00 by construction: the
+  // displacement and the path are the same line. See zupt_parked_motion_m.
+  static constexpr int kParkedMotionMinSegments = 10;
   double cont_learn_max_ = 0.0;
   int    cont_learn_n_   = 0;
   double cont_learned_m_ = 0.0;   // 0 = not learned yet

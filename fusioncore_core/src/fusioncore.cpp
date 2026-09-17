@@ -215,6 +215,7 @@ void FusionCore::reset_parked_gnss_evidence() {
   gnss_parked_inflation_      = 1.0;
   parked_ref_x_ = parked_ref_y_ = 0.0;
   parked_path_len_ = 0.0;
+  parked_seg_n_ = 0;
 }
 
 void FusionCore::reset() {
@@ -1301,16 +1302,32 @@ bool FusionCore::apply_gnss_update(
       !parked_moving_detected_) {
     if (!parked_fix_has_prev_) {
       parked_ref_x_ = fix.x; parked_ref_y_ = fix.y; parked_path_len_ = 0.0;
+      parked_seg_n_ = 0;
     } else {
       parked_path_len_ += std::hypot(fix.x - parked_fix_prev_[0],
                                      fix.y - parked_fix_prev_[1]);
+      ++parked_seg_n_;
     }
     const double disp = std::hypot(fix.x - parked_ref_x_, fix.y - parked_ref_y_);
     gnss_parked_straightness_ =
       (parked_path_len_ > 1e-6) ? disp / parked_path_len_ : 0.0;
 
+    // Straightness cannot carry this decision on its own, and the numbers in
+    // zupt_parked_motion_straightness say why: it runs on every prefix of the
+    // parked window, not on the whole window the threshold was calibrated
+    // against, and a short prefix of genuinely parked fixes reaches 0.902. So
+    // ask the accelerometer too. A dead encoder reports zero, but it cannot
+    // fake the vibration of a robot that is actually rolling, and that
+    // separation is about 100x where straightness overlaps outright.
+    const double astd = accel_magnitude_std();
+    const bool imu_says_moving = (config_.zupt_accel_std_threshold <= 0.0)
+      ? true   // the user turned the accelerometer check off, straightness alone
+      : (astd > config_.zupt_accel_std_threshold);
+
     if (disp >= config_.zupt_parked_motion_m &&
-        gnss_parked_straightness_ >= config_.zupt_parked_motion_straightness) {
+        parked_seg_n_ >= kParkedMotionMinSegments &&
+        gnss_parked_straightness_ >= config_.zupt_parked_motion_straightness &&
+        imu_says_moving) {
       // The wheels are lying. Hand back everything the ZUPT suppression took so
       // GNSS can pull the estimate along instead of being drowned out.
       parked_moving_detected_ = true;
@@ -2242,6 +2259,46 @@ bool FusionCore::update_magnetometer(
   // bit 0 = dimension 0 (heading) is an angle: wrap innovation across +-pi
   constexpr unsigned int MAG_ANGLE_DIMS = 0b1;
 
+  // Before anything is gated: if the filter has no absolute heading at all, this
+  // reading ESTABLISHES one rather than being fused into one.
+  //
+  // The reason is that the filter's yaw is not a measurement of anything yet.
+  // init() leaves it at 0 with P(QZ,QZ) = 1e-8, a hundredth of a degree of
+  // claimed certainty about a number nobody ever took. Gating a magnetometer
+  // against that is circular, and it locks out the one sensor that could fix it.
+  // Measured on the rover 2026-09-15, the first time the mag was ever enabled:
+  // 2499 clean readings, |B| steady at 56.46 uT, zero failed, and every single
+  // one rejected CHI2_FAILED. The GPS track heading path above documents the
+  // same trap and skips its own gate on first fusion for the same reason.
+  //
+  // Fusing ungated does not work either, twice over. The gain against a 1e-8
+  // prior is nil, so an accepted update moves yaw by nothing; and waiting for
+  // the covariance to grow enough to matter walks into the unbounded-quaternion
+  // -covariance defect, where the sigma points spread far enough that the mean
+  // stops meaning anything. Measured: yaw converged to -29.5 deg against a truth
+  // of 40. So set it, once, and let the gate work normally from the next reading.
+  //
+  // Roll and pitch are kept as they are. They come from gravity and are already
+  // observable, and this measurement says nothing about them.
+  if (heading_source_ == HeadingSource::NONE) {
+    const double cy = std::cos(yaw_mag * 0.5), sy = std::sin(yaw_mag * 0.5);
+    const double cp = std::cos(pitch   * 0.5), sp = std::sin(pitch   * 0.5);
+    const double cr = std::cos(roll    * 0.5), sr = std::sin(roll    * 0.5);
+    ukf_.set_orientation(cr*cp*cy + sr*sp*sy,
+                         sr*cp*cy - cr*sp*sy,
+                         cr*sp*cy + sr*cp*sy,
+                         cr*cp*sy - sr*sp*cy);
+
+    heading_validated_ = true;
+    heading_source_    = HeadingSource::MAGNETOMETER;
+    last_mag_time_     = timestamp_seconds;
+    ++update_count_;
+    mag_debug_.accepted = true;
+    mag_debug_.reason   = MagRejectionReason::ACCEPTED;
+    note_mag_outcome(timestamp_seconds);
+    return true;
+  }
+
   if (config_.outlier_rejection) {
     sensors::GnssHdgMeasurement innov_pre;
     sensors::GnssHdgNoiseMatrix S;
@@ -2260,11 +2317,9 @@ bool FusionCore::update_magnetometer(
   ukf_.update<sensors::GNSS_HDG_DIM>(
     z, sensors::gnss_hdg_measurement_function, R, MAG_ANGLE_DIMS);
 
-  // Magnetometer immediately provides valid heading.
-  // Upgrade from GPS_TRACK (which requires 5m of motion) but never downgrade
-  // from DUAL_ANTENNA (which is a stronger absolute source).
+  // Upgrade from GPS_TRACK, which needs metres of motion and degrades with
+  // receiver noise, but never downgrade from DUAL_ANTENNA, a stronger source.
   if (!heading_validated_ ||
-      heading_source_ == HeadingSource::NONE ||
       heading_source_ == HeadingSource::GPS_TRACK) {
     heading_validated_ = true;
     heading_source_    = HeadingSource::MAGNETOMETER;
