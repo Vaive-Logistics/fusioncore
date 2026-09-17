@@ -179,7 +179,29 @@ imu.remove_gravitational_acceleration: true
 # means: "my driver already removed gravity, add it back"
 ```
 
-The names look the same but they mean opposite things. **Both set to `true` describe the same physical situation.** Rule of thumb: check `linear_acceleration.z` at rest. If it reads `~9.8 m/s²`, set `false`. If it reads `~0.0`, set `true`.
+The names look the same and they mean opposite things, so **the value must be
+inverted when you migrate.**
+
+```
+IMU reads ~9.8 m/s² in z at rest (gravity present, the common case)
+    robot_localization:  imu0_remove_gravitational_acceleration: true
+    FusionCore:          imu.remove_gravitational_acceleration: false
+
+IMU reads ~0.0 m/s² in z at rest (driver already removed it)
+    robot_localization:  imu0_remove_gravitational_acceleration: false
+    FusionCore:          imu.remove_gravitational_acceleration: true
+```
+
+robot_localization's flag means "the data has gravity in it, please take it out".
+FusionCore's means "the driver already took it out, please put it back", because the
+filter's measurement model expects specific force. Copying the value across unchanged
+makes FusionCore add a second 9.8 m/s² to data that already carries it, and a constant
+acceleration error double-integrates into position.
+
+**The reliable check is the sensor, not the old config.** Run
+`ros2 topic echo /imu/data --field linear_acceleration.z --once` with the robot at
+rest. `~9.8` means `false`, `~0.0` means `true`. `tools/rl_to_fusioncore.py` performs
+this inversion for you and says so in its output.
 
 ---
 

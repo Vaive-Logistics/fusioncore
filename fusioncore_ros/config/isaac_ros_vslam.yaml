@@ -1,0 +1,81 @@
+# Hardware config: NVIDIA Isaac ROS Visual SLAM as the visual odometry source
+#
+# STATUS: UNTESTED. The plumbing is verified by inspection, not by running it.
+# FusionCore's vslam input subscribes to nav_msgs/Odometry (fusion_node.cpp), and
+# Isaac ROS Visual SLAM publishes nav_msgs/Odometry, so no code is needed on either
+# side. Nobody has run this combination end to end. If you do, please report back on
+# the issue tracker and this becomes a certified config with your numbers in it.
+#
+# CONFIRM THE TOPIC NAME AGAINST YOUR OWN GRAPH before trusting this file:
+#     ros2 topic list | grep visual_slam
+#     ros2 topic info <that topic>          # must be nav_msgs/msg/Odometry
+# The name below is the documented default and it has changed between Isaac ROS
+# releases. A wrong topic name is silent: FusionCore subscribes, receives nothing,
+# and runs happily on the remaining sensors while you assume VSLAM is being fused.
+#
+# WHY THIS PAIRING MAKES SENSE
+# Isaac ROS answers "based on what the cameras and IMU saw, how have I moved". That
+# is a measurement, and like every measurement it has failure modes: blank walls,
+# darkness, repetitive texture, dust, rain, and a discontinuous jump whenever
+# tracking is lost and the map re-initialises. FusionCore answers a different
+# question: given GNSS, wheel odometry, IMU and visual odometry, all imperfect and
+# some of them wrong right now, what is the best estimate of the robot's state.
+# The two are different layers, not competitors, and the interface between them
+# already exists.
+#
+# Launch:
+#   ros2 launch fusioncore_ros fusioncore.launch.py \
+#     fusioncore_config:=$(ros2 pkg prefix fusioncore_ros)/share/fusioncore_ros/config/isaac_ros_vslam.yaml
+
+fusioncore:
+  ros__parameters:
+    base_frame: base_link
+    odom_frame: odom
+    publish_rate: 50.0
+    publish.force_2d: false          # a camera rig is usually not planar
+
+    motion_model: "DifferentialDrive"   # change to match your chassis
+
+    # ── IMU ───────────────────────────────────────────────────────────────────
+    # Use the SAME IMU Isaac ROS is using for its visual-inertial odometry. Feeding
+    # the filter a different IMU than the one inside VSLAM means the two disagree in
+    # ways neither can explain.
+    imu.topic: "/imu/data"
+    imu.has_magnetometer: false      # true ONLY if yaw is referenced to magnetic north
+    imu.gyro_noise: 0.005
+    imu.accel_noise: 50.0            # raise for a vibrating chassis, see docs
+    imu.remove_gravitational_acceleration: false   # false if z reads ~9.8 at rest
+
+    # ── Visual SLAM ───────────────────────────────────────────────────────────
+    vslam.topic: "/visual_slam/tracking/odometry"
+
+    # Isaac ROS publishes a pose covariance. FusionCore uses it when present and
+    # falls back to these only when the message covariance is all zeros, which some
+    # builds do. Check yours before relying on either path:
+    #   ros2 topic echo /visual_slam/tracking/odometry --field pose.covariance --once
+    vslam.position_noise: 0.05
+    vslam.orientation_noise: 0.02
+
+    # THE ONE THAT MATTERS FOR VSLAM. On tracking loss the map re-initialises and the
+    # pose jumps discontinuously. That jump is not motion and must not be fused as
+    # motion. After this many consecutive gate rejections FusionCore re-anchors the
+    # VSLAM origin instead of fighting it. Lower it if your scene causes frequent
+    # relocalisation; raise it if a genuinely noisy patch is triggering re-anchors.
+    vslam.reinit_n: 10
+
+    # ── Wheel odometry, if you have it ────────────────────────────────────────
+    # Worth keeping even with good VSLAM. Wheels and cameras fail for unrelated
+    # reasons: wheels slip where cameras see fine, cameras lose tracking on a blank
+    # wall where wheels are honest.
+    encoder.topic: ""
+    encoder.vel_noise: 0.05
+    encoder.yaw_noise: 0.05
+
+    # ── GNSS, if outdoors ─────────────────────────────────────────────────────
+    # Leave empty for a GPS-denied robot. FusionCore consumes NavSatFix directly in
+    # ECEF, so navsat_transform is not needed.
+    gnss.fix_topic: ""
+
+    # ── Outlier rejection ─────────────────────────────────────────────────────
+    outlier_rejection: true
+    outlier_threshold_vslam: 16.27   # chi2(3, 0.999)
