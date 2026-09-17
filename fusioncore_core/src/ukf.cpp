@@ -37,17 +37,26 @@ void UKF::compute_weights() {
   int n_sigma = 2 * n_aug_ + 1;
   Wm_.resize(n_sigma);
   Wc_.resize(n_sigma);
-  // WARNING: with 23 states and the default alpha=0.1 this gives Wm[0] = -99 and
-  // Wi = +2.17, so every mean is reconstructed as a difference of huge nearly
-  // cancelling numbers and any floating-point asymmetry is amplified about 100x.
-  // The generate_sigma_points() comment below records this already causing
-  // orientation drift once. Measured 2026-08-03 on a real field bag: raising
-  // alpha to 0.5 (Wm[0] = -3.0) cut spurious position motion by 23 percent.
+  // alpha is 1.0 since 0.3.7 (commit 0da4ff0, 2026-08-13), which gives lambda = 0
+  // and all 47 weights non-negative: the standard unscaled UKF. Do not lower it.
   //
-  // It is NOT the whole story: alpha=1.0, which gives a perfectly conditioned
-  // Wm[0] = 0, is worse again, so this is a U-curve rather than a cancellation
-  // collapse. Raising alpha is still worth doing, but it changes every filter
-  // output and must go through tools/check_benchmark_regression.py first.
+  // History, because the failure is instructive. The old default was alpha = 0.1,
+  // which at 23 states makes Wm[0] = -99 while the other 46 are +2.17, so every
+  // mean is reconstructed as a difference of huge nearly cancelling numbers. Yaw
+  // is unobservable without an absolute heading source, so the quaternion sigma
+  // points spread wide, their forward displacements cancel, and what survives is
+  // the correct forward-pointing centre point multiplied by -99. The filter drove
+  // BACKWARDS while reporting a perfect velocity and a perfect heading.
+  //
+  // Measured on tools/repro/dr.cpp, perfect encoder at 1 m/s over 60 s, truth 60.00 m:
+  //     alpha 0.1   Wm[0] -99.00   x = -114.06
+  //     alpha 0.5   Wm[0]  -3.00   x =    8.83
+  //     alpha 1.0   Wm[0]   0.00   x =   48.43
+  // and on NCLT 2013-04-05 at 1x playback, 5268.80 m -> 131.85 m ATE, a 97.5
+  // percent reduction, with robot_localization unchanged at ~230 m as the control.
+  //
+  // See the full note on UKFParams::alpha in ukf.hpp. Any change here alters every
+  // filter output and must go through tools/check_benchmark_regression.py.
   Wm_[0] = lambda_ / (n_aug_ + lambda_);
   Wc_[0] = Wm_[0] + (1.0 - params_.alpha * params_.alpha + params_.beta);
   double w = 0.5 / (n_aug_ + lambda_);
