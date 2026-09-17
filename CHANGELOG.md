@@ -8,6 +8,47 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The parked-motion check ran on every prefix of the window, not on the window.**
+  `zupt_parked_motion_straightness` is 0.85, a figure calibrated against whole parked
+  windows. It was evaluated on every prefix as fixes arrived, and short prefixes are
+  far straighter than whole ones. Re-measured on the same bags, worst parked
+  straightness at the moment displacement first passes 5 m:
+
+  ```
+   6 segments  0.902      17 segments  0.847
+   8 segments  0.877      22 segments  0.840
+  10 segments  0.880      30 segments  0.811
+  13 segments  0.855      38 segments  0.722   <- where 0.85 came from
+  ```
+
+  So the threshold is breached by a stationary robot anywhere under about 30
+  segments, and at one segment it is exactly 1.00 by construction. It false fired
+  three times on 2026-09-15, once indoors 2.8 s after the first fix. Now
+  `kParkedMotionMinSegments` requires 10 fix-to-fix segments before the figure is
+  allowed to mean anything, and the accelerometer has to agree the robot is moving
+  before the wheels are called liars. A dead encoder reports zero but cannot fake
+  the vibration of a rolling robot, and that separation is about 100x where
+  straightness overlaps outright.
+
+- **A magnetometer could never establish the heading it exists to provide.** `init()`
+  leaves yaw at 0 with `P(QZ,QZ) = 1e-8`, a hundredth of a degree of claimed certainty
+  about a number nobody measured. Gating a magnetometer against that is circular and
+  locks out the one sensor that could correct it. Measured on the rover the first time
+  the magnetometer was ever enabled: 2499 clean readings, `|B|` steady at 56.46 uT,
+  zero failed reads, and every single one rejected `CHI2_FAILED`.
+
+  Fusing ungated does not work either. The gain against a 1e-8 prior is nil, so an
+  accepted update moves yaw by nothing, and waiting for the covariance to grow walks
+  into the unbounded-quaternion-covariance defect where the sigma points spread far
+  enough that the mean stops meaning anything (measured: yaw converged to -29.5 deg
+  against a truth of 40). So when `heading_source` is `NONE` the first reading now SETS
+  the orientation through the new `UKF::set_orientation`, and the gate works normally
+  from the next one. Roll and pitch are left alone, being gravity referenced and
+  already observable. The GPS track heading path already skips its own gate on first
+  fusion for the same reason.
+
 ### Added
 
 - **Every sensor gate now records why it rejected, not just that it did.** The GNSS and
