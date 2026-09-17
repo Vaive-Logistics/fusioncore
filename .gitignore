@@ -102,6 +102,7 @@ __pycache__/
 demo_output/
 gazebo.md
 roscon.md
+SESSION_HANDOFF.md
 roscon_lightning_talk.pptx
 
 # Client engagement files: local only, never commit
