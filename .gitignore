@@ -113,6 +113,11 @@ fusioncore-100-deliverables-to-roscon.md
 # Local scratch working files: never commit
 scratchpad/
 
+# Claude Code's project-local settings and history. CLAUDE.md has always listed
+# this as gitignored and it never actually was, so `git add -A` would have staged
+# it into a PUBLIC repo. Found 2026-09-17.
+.claude/
+
 # Hardware build: local rover notes + secrets (WiFi password, Pi IP, order numbers).
 # NEVER commit. Leading slash anchors to the repo root ONLY, so the public
 # docs/hardware/ directory stays tracked.
