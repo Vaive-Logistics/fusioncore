@@ -26,7 +26,7 @@ fusioncore:
     #imu.topic: "/ona2/sensors/imu_front/imu_uncalib"
     
 
-    imu.gyro_noise: 0.005      # rad/s: 1-sigma per axis
+    imu.gyro_noise: 0.5      # rad/s: 1-sigma per axis
     imu.accel_noise: 0.1       # m/s²: 1-sigma per axis
 
     # Set true if IMU has magnetometer (9-axis: BNO08x, VectorNav, Xsens).
@@ -67,7 +67,7 @@ fusioncore:
     encoder.topic: "/ona2/local_odom_combined"
     #encoder.topic: "/ona2/odometry/ground_truth"
     
-    encoder.vel_noise: 0.1    # m/s: 1-sigma forward velocity noise
+    encoder.vel_noise: 0.01    # m/s: 1-sigma forward velocity noise
     encoder.yaw_noise: 0.05    # rad/s: 1-sigma angular velocity noise
 
     # Lateral velocity non-holonomic constraint (m/s sigma).
@@ -358,7 +358,7 @@ fusioncore:
     # ConstantVelocityAcceleration: no lateral constraint (default, works for all robots)
     # DifferentialDrive: zeros VY each predict step (tighter for diff-drive, skid-steer)
     # Ackermann: same lateral constraint with wheelbase stored for future extensions
-    motion_model: "Ackermann"
+    motion_model: "DifferentialDrive"
     motion_model_params.wheelbase: 1.05   # meters: used by Ackermann model only
 
     # ── Sensor wait ───────────────────────────────────────────────────────────
