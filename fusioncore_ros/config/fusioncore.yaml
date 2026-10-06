@@ -2,6 +2,9 @@ fusioncore:
   ros__parameters:
     base_frame: ona2/base_link
     odom_frame: odom
+
+    #base_frame: /fusion/ona2/base_link
+    #odom_frame: ona2/odom
     publish_rate: 100.0
 
     # Force 2D output: zeroes position.z, velocity.z, and the TF translation.z.
@@ -20,8 +23,11 @@ fusioncore:
     # Primary IMU topic. Equivalent to a launch-time remap.
     # Common: OAK-D: /imu   Realsense: /camera/imu   Clearpath: /sensors/imu_0/data
     imu.topic: "/imu/data"
-    imu.gyro_noise: 0.0001      # rad/s: 1-sigma per axis
-    imu.accel_noise: 0.001       # m/s²: 1-sigma per axis
+    #imu.topic: "/ona2/sensors/imu_front/imu_uncalib"
+    
+
+    imu.gyro_noise: 0.005      # rad/s: 1-sigma per axis
+    imu.accel_noise: 0.1       # m/s²: 1-sigma per axis
 
     # Set true if IMU has magnetometer (9-axis: BNO08x, VectorNav, Xsens).
     # false (default): 6-axis gyro+accel only. Yaw from integration, drifts over time.
@@ -59,9 +65,10 @@ fusioncore:
     # odometry, so subscribing to /odom would invite a loop with its own output.
     # Point this at your driver's topic (/odom, /diff_drive_controller/odom, ...).
     encoder.topic: "/ona2/local_odom_combined"
+    #encoder.topic: "/ona2/odometry/ground_truth"
     
-    encoder.vel_noise: 0.01    # m/s: 1-sigma forward velocity noise
-    encoder.yaw_noise: 0.02    # rad/s: 1-sigma angular velocity noise
+    encoder.vel_noise: 0.1    # m/s: 1-sigma forward velocity noise
+    encoder.yaw_noise: 0.05    # rad/s: 1-sigma angular velocity noise
 
     # Lateral velocity non-holonomic constraint (m/s sigma).
     # 0.05 (default): differential drive. Robot cannot move sideways.
@@ -91,9 +98,9 @@ fusioncore:
     # FusionCore skips TF validation and lever-arm auto-resolution for it.
     gnss.frame_id: "ubx"
 
-    gnss.base_noise_xy: 1.0    # meters: base position noise sigma, scaled by HDOP
-    gnss.base_noise_z: 2.0     # meters: altitude noise sigma, scaled by VDOP
-    gnss.heading_noise: 0.02   # radians: dual-antenna heading noise sigma
+    gnss.base_noise_xy: 5.0    # meters: base position noise sigma, scaled by HDOP
+    gnss.base_noise_z: 5.0     # meters: altitude noise sigma, scaled by VDOP
+    gnss.heading_noise: 0.5   # radians: dual-antenna heading noise sigma
     # Quality gate. TWO pairs, and only one of them applies to your receiver.
     #
     # sensor_msgs/NavSatFix carries no DOP, so FusionCore reads the reported
@@ -152,8 +159,8 @@ fusioncore:
     # Used with receivers that output heading as a separate IMU-style message
     # (u-blox F9H, Septentrio dual-antenna). Validates heading immediately at startup.
     # Leave empty to disable.
-    #gnss.heading_topic: "/ona2/fake_imu"
-    gnss.heading_topic: "/ona2/fake_imu" #given from heading_estimator node
+    gnss.heading_topic: "/ona2/fake_imu"
+    #gnss.heading_topic: "" #given from heading_estimator node
 
     # compass_msgs/Azimuth heading topic (REP-145 standard).
     # Preferred over gnss.heading_topic when your receiver supports it.
@@ -185,7 +192,7 @@ fusioncore:
     # Maximum yaw rate (rad/s) for GPS displacement steps to count.
     # During fast turns the bearing changes too quickly to give a reliable heading measurement.
     # Decrease for robots that make tight turns at slow speed (delivery robots in corridors).
-    gnss.track_heading_max_yaw_rate: 0.3  # rad/s (~17 deg/s)
+    gnss.track_heading_max_yaw_rate: 0.15  # rad/s (~17 deg/s)
 
     # ── GPS inertial coast mode ───────────────────────────────────────────────
     # When GPS repeatedly fails or goes silent, coast mode inflates process noise
@@ -339,11 +346,11 @@ fusioncore:
     # or if the filter reacts too sluggishly to real motion (increase q_velocity).
     ukf.q_position:       0.01    # m²/step: position drift between updates
     ukf.q_orientation:    1.0e-9  # quaternion regularization only (keep very small)
-    ukf.q_velocity:       0.1     # (m/s)²/step: velocity drift
-    ukf.q_angular_vel:    0.1     # (rad/s)²/step: angular velocity drift
+    ukf.q_velocity:       0.0001     # (m/s)²/step: velocity drift
+    ukf.q_angular_vel:    0.001     # (rad/s)²/step: angular velocity drift
     ukf.q_acceleration:   1.0     # (m/s²)²/step: acceleration drift
-    ukf.q_gyro_bias:      1.0e-5  # (rad/s)²/step: gyro bias drift (slow MEMS changes)
-    ukf.q_accel_bias:     1.0e-5  # (m/s²)²/step: accel bias drift
+    ukf.q_gyro_bias:      1.0e-3  # (rad/s)²/step: gyro bias drift (slow MEMS changes)
+    ukf.q_accel_bias:     1.0e-3  # (m/s²)²/step: accel bias drift
     ukf.q_encoder_wz_bias: 1.0e-7 # (rad/s)²/step: encoder WZ bias drift (mechanical: very slow)
 
     # ── Motion model ──────────────────────────────────────────────────────────
@@ -366,7 +373,7 @@ fusioncore:
     # estimates gyro and accel bias from the mean, and initializes with correct values.
     # Robot MUST be stationary. Falls back to zero bias if robot moves during window.
     # Recommended: 2.0 seconds. Reduces startup position drift from ~10cm to <1cm.
-    init.stationary_window: 2.0
+    init.stationary_window: 0.0
 
     # ── PROJ coordinate reference ─────────────────────────────────────────────
     # input.gnss_crs: CRS of incoming NavSatFix messages (default: WGS84 lat/lon)
@@ -397,7 +404,7 @@ fusioncore:
     # scattered 1.03 m over 70 stationary fixes. A floor is safer than a
     # multiplier, because a multiplier tuned for one receiver mode is wrong the
     # moment it switches to the other.
-    gnss.min_sigma_xy: 0.02
+    gnss.min_sigma_xy: 0.05
     gnss.min_sigma_z: 0.05
 
     # Fix-to-fix continuity. This is the ONLY gate that can see a metre-scale
@@ -424,8 +431,8 @@ fusioncore:
     # speed in m/s; 0.0 disables the gate. The bound is
     # max_speed*dt + margin + sigma_k*sigma, and the sigma term is not optional:
     # without it this gate rejected 39% of good fixes on real hardware.
-    gnss.max_speed: 2.5
-    gnss.max_speed_margin: 0.3
+    gnss.max_speed: 2.0
+    gnss.max_speed_margin: 0.1
     gnss.max_speed_sigma_k: 0.1
     gnss.max_speed_drift_k: 1.0
 

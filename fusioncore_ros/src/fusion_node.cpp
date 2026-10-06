@@ -3306,8 +3306,10 @@ private:
 
   void publish_state()
   {
+
     std::lock_guard<std::mutex> lock(fc_mutex_);
     if (!fc_->is_initialized()) return;
+    std::cout << "publish\n";
 
     const fusioncore::State& s = fc_->get_state();
     auto stamp = now();
@@ -3479,6 +3481,14 @@ private:
     auto status = fc_->get_status();
     auto stamp  = now();
 
+    const auto& bias_state = fc_->get_state();
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+      "IMU estimated bias: accel [%.4f, %.4f, %.4f] m/s^2, "
+      "gyro [%.5f, %.5f, %.5f] rad/s",
+      bias_state.x[fusioncore::B_AX], bias_state.x[fusioncore::B_AY],
+      bias_state.x[fusioncore::B_AZ], bias_state.x[fusioncore::B_GX],
+      bias_state.x[fusioncore::B_GY], bias_state.x[fusioncore::B_GZ]);
+
     diagnostic_msgs::msg::DiagnosticArray diag_array;
     diag_array.header.stamp = stamp;
 
@@ -3606,6 +3616,13 @@ private:
       fh.position_sigma_x = status.position_sigma_x;
       fh.position_sigma_y = status.position_sigma_y;
       fh.position_sigma_z = status.position_sigma_z;
+
+      fh.gyro_bias_x = s.gyro_bias_x();
+      fh.gyro_bias_y = s.gyro_bias_y();
+      fh.gyro_bias_z = s.gyro_bias_z();
+      fh.accel_bias_x = s.accel_bias_x();
+      fh.accel_bias_y = s.accel_bias_y();
+      fh.accel_bias_z = s.accel_bias_z();
 
       fh.heading_sigma_deg = compute_heading_sigma_deg(s);
 

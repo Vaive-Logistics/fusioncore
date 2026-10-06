@@ -6,7 +6,7 @@ from launch.actions import (
     TimerAction,
 )
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import LifecycleNode
+from launch_ros.actions import LifecycleNode, Node
 from launch_ros.event_handlers import OnStateTransition
 from launch_ros.events.lifecycle import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -17,6 +17,9 @@ def _make_node(context, *args, **kwargs):
     env = LaunchConfiguration("env_config").perform(context)
     autoconfigure = (
         LaunchConfiguration("autoconfigure").perform(context).lower() == "true"
+    )
+    use_sim_time = (
+        LaunchConfiguration("use_sim_time").perform(context).lower() == "true"
     )
 
     params = [config]
@@ -29,7 +32,7 @@ def _make_node(context, *args, **kwargs):
     # off here. With autoconfigure on you would get a double-activate; with it
     # off, configure would jump straight to active and the caller's activate
     # would be an invalid transition.
-    params.append({"autostart": False})
+    params.append({"autostart": False, "use_sim_time": use_sim_time})
 
     node = LifecycleNode(
         package="fusioncore_ros",
@@ -38,6 +41,9 @@ def _make_node(context, *args, **kwargs):
         namespace="",
         output="screen",
         parameters=params,
+        remappings=[
+            ("/imu/data", "/ona2/sensors/imu_front/imu_uncalib"),
+        ],
     )
 
     # Someone else (a lifecycle manager, or you by hand) will bring it up.
@@ -71,6 +77,12 @@ def generate_launch_description():
     pkg = get_package_share_directory("fusioncore_ros")
 
     return LaunchDescription([
+        #Node(
+        #    package="fusioncore_ros",
+        #    executable="centered_odom_path_node.py",
+        #    name="centered_odom_path",
+        #    output="screen",
+        #),
         DeclareLaunchArgument(
             "fusioncore_config",
             default_value=os.path.join(pkg, "config", "fusioncore.yaml"),
@@ -91,6 +103,11 @@ def generate_launch_description():
                 "Bring the lifecycle node up to active automatically. "
                 "Set false if a lifecycle manager (e.g. nav2_lifecycle_manager) drives it."
             )
+        ),
+        DeclareLaunchArgument(
+            "use_sim_time",
+            default_value="true",
+            description="Use the ROS clock published on /clock, for example by rosbag play --clock",
         ),
         OpaqueFunction(function=_make_node),
     ])

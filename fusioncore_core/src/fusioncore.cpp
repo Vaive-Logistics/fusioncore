@@ -1946,6 +1946,7 @@ bool FusionCore::update_gnss_heading(
 ) {
   if (!initialized_)
     throw std::runtime_error("FusionCore: update_gnss_heading() called before init()");
+    heading_prediction_valid_ = false;
 
   if (!heading.valid) return false;
 
@@ -1958,6 +1959,8 @@ bool FusionCore::update_gnss_heading(
     return false;
 
   predict_to(timestamp_seconds);
+  heading_prediction_rad_ =sensors::gnss_hdg_measurement_function(ukf_.state().x)[0];
+  heading_prediction_valid_ = true;
 
   sensors::GnssHdgMeasurement z;
   z[0] = heading.heading_rad;
@@ -2093,6 +2096,8 @@ FusionCoreStatus FusionCore::get_status() const {
   status.vslam_chi2              = vslam_chi2_;
   status.heading_reason          = heading_reason_;
   status.heading_chi2            = heading_chi2_;
+  status.heading_prediction_valid = heading_prediction_valid_;
+  status.heading_prediction_rad   = heading_prediction_rad_;
   status.zupt_accel_std       = accel_magnitude_std();
   status.zupt_blocked_by_imu  = zupt_blocked_by_imu_;
   status.heading_vs_track_deg = xchk_median_deg();

@@ -12,6 +12,15 @@ float64 position_sigma_x
 float64 position_sigma_y
 float64 position_sigma_z
 
+# Online IMU bias estimates from the filter state.
+# Gyroscope bias is in rad/s; accelerometer bias is in m/s^2.
+float64 gyro_bias_x
+float64 gyro_bias_y
+float64 gyro_bias_z
+float64 accel_bias_x
+float64 accel_bias_y
+float64 accel_bias_z
+
 # Heading uncertainty in degrees (propagated from quaternion covariance via Jacobian)
 float64 heading_sigma_deg
 

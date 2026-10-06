@@ -53,6 +53,13 @@ install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/fusioncore_analysis_node.py
+  scripts/centered_odom_path_node.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 

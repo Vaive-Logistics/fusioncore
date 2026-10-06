@@ -4,39 +4,60 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     ExecuteProcess,
-    IncludeLaunchDescription,
+    RegisterEventHandler,
     TimerAction,
 )
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode, Node
+from launch_ros.event_handlers import OnStateTransition
+from launch_ros.events.lifecycle import ChangeState
+from lifecycle_msgs.msg import Transition
 
 
 def generate_launch_description():
     package_share = get_package_share_directory("fusioncore_ros")
-    fusioncore_launch = os.path.join(
-        package_share,
-        "launch",
-        "fusioncore.launch.py"
+    heading_estimator_share = get_package_share_directory("heading_estimator")
+    heading_estimator_config = os.path.join(
+        heading_estimator_share,
+        "config",
+        "heading_estimator_config.yaml",
     )
-
     fusioncore_config = LaunchConfiguration("fusioncore_config")
     bag = LaunchConfiguration("bag")
-    bag_delay = LaunchConfiguration("bag_delay")
     analysis_output = LaunchConfiguration("analysis_output")
 
     # -------------------------------------------------------------------------
     # FusionCore
     # -------------------------------------------------------------------------
 
-    start_fusioncore = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(fusioncore_launch),
-        launch_arguments={
-            "fusioncore_config": fusioncore_config,
-            "autoconfigure": "true",
-            "use_sim_time": "true",
-        }.items(),
+    fusioncore_node = LifecycleNode(
+        package="fusioncore_ros",
+        executable="fusioncore_node",
+        name="fusioncore",
+        namespace="",
+        output="screen",
+        parameters=[
+            fusioncore_config,
+            {"autostart": False, "use_sim_time": True},
+        ],
+    )
+    activate_fusioncore = RegisterEventHandler(OnStateTransition(
+        target_lifecycle_node=fusioncore_node,
+        start_state="configuring",
+        goal_state="inactive",
+        entities=[EmitEvent(event=ChangeState(
+            lifecycle_node_matcher=lambda action: action is fusioncore_node,
+            transition_id=Transition.TRANSITION_ACTIVATE,
+        ))],
+    ))
+    configure_fusioncore = TimerAction(
+        period=2.0,
+        actions=[EmitEvent(event=ChangeState(
+            lifecycle_node_matcher=lambda action: action is fusioncore_node,
+            transition_id=Transition.TRANSITION_CONFIGURE,
+        ))],
     )
 
     # -------------------------------------------------------------------------
@@ -49,8 +70,13 @@ def generate_launch_description():
         name="heading_estimator",
         output="screen",
         parameters=[
+            heading_estimator_config,
             {
                 "use_sim_time": True,
+                #"frame_id": "ona2/map",
+                "frame_id": "odom",                
+                "use_wheel_odom_for_motion_check": True,
+                "wheel_odom_topic": "/ona2/local_odom_combined",
             }
         ],
     )
@@ -58,47 +84,51 @@ def generate_launch_description():
     # -------------------------------------------------------------------------
     # Analysis
     # -------------------------------------------------------------------------
+    start_analysis = Node(
+        package="fusioncore_ros",
+        executable="fusioncore_analysis_node.py",
+        name="fusioncore_analysis",
+        output="screen",
+        parameters=[
+            {
+                "output_dir": analysis_output,
+                "idle_timeout_sec": 0.0,
+            }
+        ],
+    )
 
-    #start_analysis = Node(
-    #    package="fusioncore_ros",
-    #    executable="fusioncore_analysis_node.py",
-    #    name="fusioncore_analysis",
-    #    output="screen",
-    #    parameters=[
-    #        {
-    #            "output_dir": analysis_output,
-    #            "idle_timeout_sec": 5.0,
-    #        }
-    #    ],
-    #)
+    #node that publish the fusioncore path (poses)
+    start_path_publisher = Node(
+        package="fusioncore_gazebo",
+        executable="path_publisher",
+        name="path_publisher",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+    )
 
     # -------------------------------------------------------------------------
     # Rosbag
     # -------------------------------------------------------------------------
 
-    start_bag = TimerAction(
-        period=bag_delay,
-        actions=[
-            ExecuteProcess(
-                cmd=[
-                    "ros2", "bag", "play", bag,
-                    "--clock",
-                    "--remap",
-                    "/ona2/sensors/imu_front/imu_uncalib:=/imu/data",
-                    # "/fix:=/gnss/fix",
-                    "--rate", "1.0",
-                ],
-                output="screen",
-            )
+    start_bag = ExecuteProcess(
+        cmd=[
+            "ros2", "bag", "play", bag,
+            "--clock",
+            "--remap",
+            "/ona2/sensors/imu_front/imu_uncalib:=/imu/data",
+            # "/fix:=/gnss/fix",
+            "--rate", "1.0",
+            "--start-offset", "22.0",
         ],
+        output="screen",
     )
 
     return LaunchDescription([
         DeclareLaunchArgument(
             "bag",
             default_value=(
-                "/home/clement/Downloads/rosbags/ona2_gnss_bag/"
-                "ona2_gnss_bag_0.db3"
+                "/home/clement/Downloads/rosbags/ona2_gnss_15_09_2026/"
+                "ona2_gnss_15_09_2026_0.db3"
             ),
             description="Path to the rosbag2 directory or database file",
         ),
@@ -114,12 +144,6 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            "bag_delay",
-            default_value="0.0",
-            description="Seconds to wait before starting rosbag playback",
-        ),
-
-        DeclareLaunchArgument(
             "analysis_output",
             default_value=os.path.join(
                 os.path.expanduser("~"),
@@ -129,9 +153,12 @@ def generate_launch_description():
         ),
 
         # Start nodes BEFORE the bag
-        start_fusioncore,
+        fusioncore_node,
+        activate_fusioncore,
+        configure_fusioncore,
         start_heading_estimator,
-        #start_analysis,
+        start_analysis,
+        start_path_publisher,
 
         # Start the clock and all bag topics
         start_bag,

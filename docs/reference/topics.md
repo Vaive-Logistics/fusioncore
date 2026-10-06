@@ -158,6 +158,8 @@ This number tells you how statistically surprising the GPS fix was given the fil
 
 Published at 1 Hz alongside `/diagnostics`. Every field is a plain float64, so Foxglove, PlotJuggler, and rqt_plot can graph them directly without any custom panel.
 
+The message also reports the filter's online IMU bias estimates: `gyro_bias_x/y/z` in rad/s and `accel_bias_x/y/z` in m/s^2. The `fusioncore_analysis_node` records these fields to `imu_bias.csv` and plots them in `07_imu_bias_estimates.png`.
+
 ```yaml
 header:
   stamp: ...

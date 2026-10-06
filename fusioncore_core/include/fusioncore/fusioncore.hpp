@@ -695,6 +695,8 @@ struct FusionCoreStatus {
   double                 vslam_chi2               = -1.0;
   HeadingRejectionReason heading_reason = HeadingRejectionReason::NOT_PROCESSED;
   double                 heading_chi2             = -1.0;
+  bool                   heading_prediction_valid = false;
+  double                 heading_prediction_rad   = 0.0;
   // Median of (filter yaw - GPS track bearing) in degrees over recent straight
   // segments, and how many segments went into it. Only populated while an
   // absolute heading source is in charge, which is when nothing else is checking
@@ -1228,6 +1230,8 @@ private:
   double                 vslam_chi2_     = -1.0;
   HeadingRejectionReason heading_reason_ = HeadingRejectionReason::NOT_PROCESSED;
   double                 heading_chi2_   = -1.0;
+  bool                   heading_prediction_valid_ = false;
+  double                 heading_prediction_rad_   = 0.0;
 
   // Continuity threshold learned from the receiver (see GnssParams::continuity_auto).
   //
