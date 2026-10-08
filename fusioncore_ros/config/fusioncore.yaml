@@ -26,8 +26,8 @@ fusioncore:
     #imu.topic: "/ona2/sensors/imu_front/imu_uncalib"
     
 
-    imu.gyro_noise: 0.5      # rad/s: 1-sigma per axis
-    imu.accel_noise: 0.1       # m/s²: 1-sigma per axis
+    imu.gyro_noise: 0.9      # rad/s: 1-sigma per axis
+    imu.accel_noise: 0.15       # m/s²: 1-sigma per axis
 
     # Set true if IMU has magnetometer (9-axis: BNO08x, VectorNav, Xsens).
     # false (default): 6-axis gyro+accel only. Yaw from integration, drifts over time.
@@ -172,7 +172,7 @@ fusioncore:
     # separated by enough distance gives a heading measurement without a magnetometer.
     # Same mechanism as navsat_transform uses in robot_localization.
 
-    gnss.track_heading_enabled: true
+    gnss.track_heading_enabled: false
     gnss.track_heading_min_dist: 5.0     # meters: minimum displacement baseline per fusion
     gnss.track_heading_max_sigma: 0.4    # radians (~23 deg): skip fusion if GPS noise is too high
     # Warn when the heading actually in use disagrees with the GPS track bearing by
@@ -201,7 +201,7 @@ fusioncore:
     # Enter coast mode after this many consecutive GPS rejections. 0 = disabled.
     gnss.coast_n: 5
     # Position Q multiplier during coast (inflates P so returning fixes pass chi2).
-    gnss.coast_q_factor: 20.0
+    gnss.coast_q_factor: 2.0
     # Gyro bias Q multiplier during coast (loosens bias estimate so encoder WZ can correct it).
     gnss.coast_q_bias_factor: 100.0
     # R_imu[WZ] multiplier during coast. Increases encoder WZ influence on heading rate.

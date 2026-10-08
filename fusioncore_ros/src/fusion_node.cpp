@@ -32,6 +32,8 @@
 #include "fusioncore_ros/msg/gnss_status.hpp"
 #include "fusioncore_ros/msg/filter_health.hpp"
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <lifecycle_msgs/msg/state.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
 #include <mutex>
@@ -964,6 +966,8 @@ public:
     // T-second dead prediction step that can blow up the state covariance.
     // Instead, initialize lazily on the first IMU message using its timestamp.
     pending_init_ = true;
+    heading_wait_started_ = false;
+    initial_gnss_heading_yaw_.reset();
 
     rclcpp::SubscriptionOptions sensor_opts;
     sensor_opts.callback_group = sensor_cb_group_;
@@ -1299,6 +1303,7 @@ public:
       sensors_expected_.clear();
       sensors_received_.clear();
       sensor_wait_done_ = false;
+      activate_time_ = this->now().seconds();
       sensors_expected_.insert("IMU");
       sensors_expected_.insert("Encoder");
       // gnss_enabled_ too: otherwise an indoor robot with GNSS switched off
@@ -1314,7 +1319,6 @@ public:
       if (!heading_topic_.empty() ||
           !azimuth_topic_.empty())         sensors_expected_.insert("Heading");
       if (!gnss2_topic_.empty())           sensors_expected_.insert("GNSS2");
-      activate_time_ = this->now().seconds();
       RCLCPP_INFO(get_logger(), "Waiting for %zu sensor(s) before starting filter.",
         sensors_expected_.size());
     }
@@ -1562,12 +1566,34 @@ private:
         sensor_wait_done_ = true;
       }
 
+      // The all-sensors gate already spent this timeout if it completed without
+      // a heading; don't wait through a second full timeout here.
+      if (!heading_topic_.empty() && !initial_gnss_heading_yaw_ &&
+          !(wait_for_all_sensors_ && sensor_wait_done_)) {
+        if (!heading_wait_started_) {
+          heading_wait_start_ = std::chrono::steady_clock::now();
+          heading_wait_started_ = true;
+        }
+        const double elapsed = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - heading_wait_start_).count();
+        if (elapsed < sensor_wait_timeout_) {
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Waiting for first valid heading on %s before initializing yaw.",
+            heading_topic_.c_str());
+          return;
+        }
+        RCLCPP_WARN(get_logger(),
+          "No valid heading received on %s within %.1f s; initializing yaw to zero.",
+          heading_topic_.c_str(), sensor_wait_timeout_);
+      }
+
       if (init_window_duration_ <= 0.0) {
         fusioncore::State initial;
         initial.P = fusioncore::StateMatrix::Identity() * 0.1;
         initial.P(0,0) = 1000.0;
         initial.P(1,1) = 1000.0;
         initial.P(2,2) = 1000.0;
+        seed_initial_yaw(initial);
         fc_->init(initial, t);
         pending_init_ = false;
         RCLCPP_INFO(get_logger(), "Filter initialized at t=%.3f (first IMU)", t);
@@ -1681,6 +1707,7 @@ private:
               "Bias window aborted (robot moved). Starting with zero bias.");
           }
 
+          seed_initial_yaw(initial);
           fc_->init(initial, t);
           pending_init_         = false;
           init_window_collecting_ = false;
@@ -1763,13 +1790,15 @@ private:
         tf2::Vector3 g_base = gravity_in_body_frame();
         ax += g_base.x(); ay += g_base.y(); az += g_base.z();
       }
-      fc_->update_imu(t,
-        msg->angular_velocity.x,
-        msg->angular_velocity.y,
-        msg->angular_velocity.z,
-        ax, ay, az);
+      log_yaw_update(imu_topic_, t, [&]() {
+        fc_->update_imu(t,
+          msg->angular_velocity.x,
+          msg->angular_velocity.y,
+          msg->angular_velocity.z,
+          ax, ay, az);
+      });
       // No frame rotation needed: IMU is already in base_frame
-      fuse_imu_orientation_if_valid(t, msg, std::nullopt);
+      fuse_imu_orientation_if_valid(t, msg, std::nullopt, imu_topic_);
       return;
     }
 
@@ -1791,11 +1820,13 @@ private:
         tf2::Vector3 g_base = gravity_in_body_frame();
         ax += g_base.x(); ay += g_base.y(); az += g_base.z();
       }
-      fc_->update_imu(t,
-        msg->angular_velocity.x,
-        msg->angular_velocity.y,
-        msg->angular_velocity.z,
-        ax, ay, az);
+      log_yaw_update(imu_topic_, t, [&]() {
+        fc_->update_imu(t,
+          msg->angular_velocity.x,
+          msg->angular_velocity.y,
+          msg->angular_velocity.z,
+          ax, ay, az);
+      });
       return;
     }
 
@@ -1821,11 +1852,13 @@ private:
       a_base += g_base;
     }
 
-    fc_->update_imu(t,
-      w_base.x(), w_base.y(), w_base.z(),
-      a_base.x(), a_base.y(), a_base.z());
+    log_yaw_update(imu_topic_, t, [&]() {
+      fc_->update_imu(t,
+        w_base.x(), w_base.y(), w_base.z(),
+        a_base.x(), a_base.y(), a_base.z());
+    });
     // Fix 11: pass the rotation quaternion so orientation is also transformed
-    fuse_imu_orientation_if_valid(t, msg, q);
+    fuse_imu_orientation_if_valid(t, msg, q, imu_topic_);
   }
 
   // Second IMU callback. Mirrors imu_callback but skips filter initialization
@@ -1851,10 +1884,12 @@ private:
         tf2::Vector3 g_base = gravity_in_body_frame();
         ax += g_base.x(); ay += g_base.y(); az += g_base.z();
       }
-      fc_->update_imu(t,
-        msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z,
-        ax, ay, az);
-      fuse_imu_orientation_if_valid(t, msg, std::nullopt);
+      log_yaw_update(imu2_topic_, t, [&]() {
+        fc_->update_imu(t,
+          msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z,
+          ax, ay, az);
+      });
+      fuse_imu_orientation_if_valid(t, msg, std::nullopt, imu2_topic_);
       return;
     }
 
@@ -1876,9 +1911,11 @@ private:
         tf2::Vector3 g_base = gravity_in_body_frame();
         ax += g_base.x(); ay += g_base.y(); az += g_base.z();
       }
-      fc_->update_imu(t,
-        msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z,
-        ax, ay, az);
+      log_yaw_update(imu2_topic_, t, [&]() {
+        fc_->update_imu(t,
+          msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z,
+          ax, ay, az);
+      });
       return;
     }
 
@@ -1904,10 +1941,12 @@ private:
       a_base += g_base;
     }
 
-    fc_->update_imu(t,
-      w_base.x(), w_base.y(), w_base.z(),
-      a_base.x(), a_base.y(), a_base.z());
-    fuse_imu_orientation_if_valid(t, msg, q);
+    log_yaw_update(imu2_topic_, t, [&]() {
+      fc_->update_imu(t,
+        w_base.x(), w_base.y(), w_base.z(),
+        a_base.x(), a_base.y(), a_base.z());
+    });
+    fuse_imu_orientation_if_valid(t, msg, q, imu2_topic_);
   }
 
   // Returns the specific-force gravity contribution in body frame.
@@ -1934,7 +1973,8 @@ private:
   void fuse_imu_orientation_if_valid(
     double t,
     const sensor_msgs::msg::Imu::SharedPtr& msg,
-    const std::optional<tf2::Quaternion>& imu_to_base)
+    const std::optional<tf2::Quaternion>& imu_to_base,
+    const std::string& source)
   {
     // orientation_covariance[0] == -1 means "no orientation data"
     if (msg->orientation_covariance[0] < 0.0) return;
@@ -1958,9 +1998,11 @@ private:
     double roll, pitch, yaw;
     tf2::Matrix3x3(q_base).getRPY(roll, pitch, yaw);
 
-    fc_->update_imu_orientation(
-      t, roll, pitch, yaw,
-      msg->orientation_covariance.data());
+    log_yaw_update(source + " orientation", t, [&]() {
+      fc_->update_imu_orientation(
+        t, roll, pitch, yaw,
+        msg->orientation_covariance.data());
+    });
   }
 
   // ─── Encoder callback ─────────────────────────────────────────────────────
@@ -2025,11 +2067,15 @@ private:
       var_vy = nhc_vy_auto_noise_ * nhc_vy_auto_noise_;
     }
 
-    fc_->update_encoder(t, vx, vy, wz, var_vx, var_vy, var_wz);
+    log_yaw_update(encoder_topic_, t, [&]() {
+      fc_->update_encoder(t, vx, vy, wz, var_vx, var_vy, var_wz);
+    });
 
     // Non-holonomic ground constraint: wheeled robots cannot move vertically.
     // Fuses VZ=0 as a pseudo-measurement to prevent altitude drift.
-    fc_->update_ground_constraint(t);
+    log_yaw_update("encoder ground constraint", t, [&]() {
+      fc_->update_ground_constraint(t);
+    });
 
     // Zero-velocity update (ZUPT): when the robot is stationary, assert
     // [VX=0, VY=0, WZ=0] with tight noise to suppress IMU drift.
@@ -2040,7 +2086,9 @@ private:
     if (zupt_enabled_) {
       double speed = std::sqrt(vx*vx + vy*vy);
       if (speed < zupt_velocity_threshold_ && std::abs(wz) < zupt_angular_threshold_) {
-        fc_->update_zupt(t, zupt_noise_sigma_);
+        log_yaw_update("encoder ZUPT", t, [&]() {
+          fc_->update_zupt(t, zupt_noise_sigma_);
+        });
       }
     }
   }
@@ -2098,7 +2146,9 @@ private:
       }
     }
 
-    fc_->update_encoder(t, vx, vy, wz, var_vx, var_vy, var_wz);
+    log_yaw_update(encoder2_topic_, t, [&]() {
+      fc_->update_encoder(t, vx, vy, wz, var_vx, var_vy, var_wz);
+    });
   }
 
   // ─── VSLAM pose callback ──────────────────────────────────────────────────
@@ -2182,7 +2232,10 @@ private:
       pose.orientation_cov(2,2) = std::max(var_yaw, kMinVarOrient);
     }
 
-    const bool accepted = fc_->update_pose(t, pose);
+    bool accepted = false;
+    log_yaw_update(vslam_topic_, t, [&]() {
+      accepted = fc_->update_pose(t, pose);
+    });
 
     if (accepted) {
       vslam_consecutive_rejects_ = 0;
@@ -2240,7 +2293,9 @@ private:
     // is currently estimating. Bare WZ would leave an innovation of -B_EWZ.
     const auto & st_pred = fc_->get_state().x;
     const double wz_predicted = st_pred[fusioncore::WZ] + st_pred[fusioncore::B_EWZ];
-    fc_->update_encoder(t, vx, vy, wz_predicted, var_vx, var_vy, 1e12);
+    log_yaw_update(radar_vel_topic_, t, [&]() {
+      fc_->update_encoder(t, vx, vy, wz_predicted, var_vx, var_vy, 1e12);
+    });
   }
 
   // ─── GPS velocity callback ────────────────────────────────────────────────
@@ -2287,7 +2342,9 @@ private:
     // is currently estimating. Bare WZ would leave an innovation of -B_EWZ.
     const auto & st_pred = fc_->get_state().x;
     const double wz_predicted = st_pred[fusioncore::WZ] + st_pred[fusioncore::B_EWZ];
-    fc_->update_encoder(t, vx, vy, wz_predicted, var_vx, var_vy, 1e12);
+    log_yaw_update(gnss_vel_topic_, t, [&]() {
+      fc_->update_encoder(t, vx, vy, wz_predicted, var_vx, var_vy, 1e12);
+    });
   }
 
   // ─── GNSS position callback ────────────────────────────────────────────────
@@ -2511,7 +2568,15 @@ private:
 
     warn_if_dop_gate_bypassed(msg->position_covariance_type >= 1 && fix.has_sigma());
 
-    bool accepted = fc_->update_gnss(t, fix);
+    bool accepted = false;
+    std::string yaw_source = "GNSS fix";
+    log_yaw_update(yaw_source, t, [&]() {
+      accepted = fc_->update_gnss(t, fix);
+      if (fc_->get_gnss_debug().track_heading_state ==
+          fusioncore::TrackHeadingState::FUSED) {
+        yaw_source += " + GPS-track heading";
+      }
+    });
     const auto& dbg = fc_->get_gnss_debug();
 
     if (!accepted) {
@@ -2805,7 +2870,15 @@ private:
       msg->position_covariance_type >= gps_msgs::msg::GPSFix::COVARIANCE_TYPE_APPROXIMATED &&
       fix.has_sigma());
 
-    bool accepted = fc_->update_gnss(t, fix);
+    bool accepted = false;
+    std::string yaw_source = "GPSFix";
+    log_yaw_update(yaw_source, t, [&]() {
+      accepted = fc_->update_gnss(t, fix);
+      if (fc_->get_gnss_debug().track_heading_state ==
+          fusioncore::TrackHeadingState::FUSED) {
+        yaw_source += " + GPS-track heading";
+      }
+    });
     const auto& dbg = fc_->get_gnss_debug();
 
     if (!accepted) {
@@ -2848,9 +2921,6 @@ private:
 
   void gnss_heading_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
   {
-    mark_sensor_received("Heading");
-    if (!fc_->is_initialized()) return;
-
     double t = rclcpp::Time(msg->header.stamp).seconds();
 
     // Check orientation covariance: if all zeros the orientation is invalid
@@ -2877,6 +2947,8 @@ private:
       return;
     }
 
+    mark_sensor_received("Heading");
+
     // Extract yaw from quaternion
     tf2::Quaternion q(
       msg->orientation.x,
@@ -2897,11 +2969,31 @@ private:
     heading.accuracy_rad = yaw_sigma;
     heading.valid        = true;
 
-    bool accepted = fc_->update_gnss_heading(t, heading);
+    if (!fc_->is_initialized()) {
+      if (!initial_gnss_heading_yaw_) initial_gnss_heading_yaw_ = yaw;
+      return;
+    }
+
+    bool accepted = false;
+    log_yaw_update(heading_topic_, t, [&]() {
+      accepted = fc_->update_gnss_heading(t, heading);
+    });
     if (!accepted) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
         "GNSS heading update rejected");
     }
+  }
+
+  void seed_initial_yaw(fusioncore::State& initial)
+  {
+    if (!initial_gnss_heading_yaw_) return;
+    const double half_yaw = 0.5 * *initial_gnss_heading_yaw_;
+    initial.x[fusioncore::QW] = std::cos(half_yaw);
+    initial.x[fusioncore::QX] = 0.0;
+    initial.x[fusioncore::QY] = 0.0;
+    initial.x[fusioncore::QZ] = std::sin(half_yaw);
+    RCLCPP_INFO(get_logger(), "Initializing yaw from first heading: %.3f rad",
+      *initial_gnss_heading_yaw_);
   }
 
   // ─── compass_msgs/Azimuth heading callback ───────────────────────────────
@@ -2952,7 +3044,10 @@ private:
         "Consider using GEOGRAPHIC for better accuracy.");
     }
 
-    bool accepted = fc_->update_gnss_heading(t, heading);
+    bool accepted = false;
+    log_yaw_update(azimuth_topic_, t, [&]() {
+      accepted = fc_->update_gnss_heading(t, heading);
+    });
     if (!accepted) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
         "Azimuth heading update rejected");
@@ -2963,17 +3058,45 @@ private:
   {
     if (!fc_->is_initialized()) return;
     double t = rclcpp::Time(msg->header.stamp).seconds();
-    bool accepted = fc_->update_magnetometer(
-      t,
-      msg->magnetic_field.x,
-      msg->magnetic_field.y,
-      msg->magnetic_field.z);
+    bool accepted = false;
+    log_yaw_update(mag_topic_, t, [&]() {
+      accepted = fc_->update_magnetometer(
+        t,
+        msg->magnetic_field.x,
+        msg->magnetic_field.y,
+        msg->magnetic_field.z);
+    });
     if (!accepted) {
       const auto& debug = fc_->get_magnetometer_debug();
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
         "Magnetometer heading update rejected (%s)",
         mag_reason_str(debug.reason).c_str());
     }
+  }
+
+  template <typename Update>
+  void log_yaw_update(const std::string& source, double timestamp, Update&& update)
+  {
+    const auto read_yaw = [this]() {
+      const auto& x = fc_->get_state().x;
+      double roll, pitch, yaw;
+      fusioncore::quat_to_euler(
+        x[fusioncore::QW], x[fusioncore::QX],
+        x[fusioncore::QY], x[fusioncore::QZ], roll, pitch, yaw);
+      return yaw;
+    };
+
+    const double yaw_before = read_yaw();
+    update();
+    const double yaw_after = read_yaw();
+    const double delta_yaw = std::remainder(yaw_after - yaw_before, 2.0 * M_PI);
+    if (std::abs(delta_yaw) <= M_PI / 180.0) return;
+
+    constexpr double kRadToDeg = 180.0 / M_PI;
+    RCLCPP_INFO(get_logger(),
+      "Yaw update: source=%s t=%.6f before=%.3f deg after=%.3f deg delta=%+.6f deg",
+      source.c_str(), timestamp,
+      yaw_before * kRadToDeg, yaw_after * kRadToDeg, delta_yaw * kRadToDeg);
   }
 
   // ─── Observability helpers ────────────────────────────────────────────────
@@ -3309,7 +3432,6 @@ private:
 
     std::lock_guard<std::mutex> lock(fc_mutex_);
     if (!fc_->is_initialized()) return;
-    std::cout << "publish\n";
 
     const fusioncore::State& s = fc_->get_state();
     auto stamp = now();
@@ -3482,12 +3604,12 @@ private:
     auto stamp  = now();
 
     const auto& bias_state = fc_->get_state();
-    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
-      "IMU estimated bias: accel [%.4f, %.4f, %.4f] m/s^2, "
-      "gyro [%.5f, %.5f, %.5f] rad/s",
-      bias_state.x[fusioncore::B_AX], bias_state.x[fusioncore::B_AY],
-      bias_state.x[fusioncore::B_AZ], bias_state.x[fusioncore::B_GX],
-      bias_state.x[fusioncore::B_GY], bias_state.x[fusioncore::B_GZ]);
+    //RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+    //  "IMU estimated bias: accel [%.4f, %.4f, %.4f] m/s^2, "
+    //  "gyro [%.5f, %.5f, %.5f] rad/s",
+    //  bias_state.x[fusioncore::B_AX], bias_state.x[fusioncore::B_AY],
+    //  bias_state.x[fusioncore::B_AZ], bias_state.x[fusioncore::B_GX],
+    //  bias_state.x[fusioncore::B_GY], bias_state.x[fusioncore::B_GZ]);
 
     diagnostic_msgs::msg::DiagnosticArray diag_array;
     diag_array.header.stamp = stamp;
@@ -3949,6 +4071,8 @@ private:
   double      radar_vel_noise_ = 0.1;
 
   bool        pending_init_        = false;
+  bool        heading_wait_started_ = false;
+  std::chrono::steady_clock::time_point heading_wait_start_;
 
   // Static bias initialization window
   double init_window_duration_         = 0.0;
@@ -3966,6 +4090,7 @@ private:
   std::string imu_topic_;
   std::string imu_frame_override_;
   std::string imu_frame_resolved_;
+  std::optional<double> initial_gnss_heading_yaw_;
   std::string imu2_topic_;
   std::string imu2_frame_override_;
   bool        imu2_remove_gravity_ = false;

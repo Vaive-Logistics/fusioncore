@@ -54,7 +54,6 @@ install(DIRECTORY config launch
 )
 
 install(PROGRAMS
-  scripts/fusioncore_analysis_node.py
   scripts/centered_odom_path_node.py
   DESTINATION lib/${PROJECT_NAME}
 )

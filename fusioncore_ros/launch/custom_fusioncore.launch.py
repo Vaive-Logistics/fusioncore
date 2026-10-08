@@ -53,7 +53,7 @@ def generate_launch_description():
         ))],
     ))
     configure_fusioncore = TimerAction(
-        period=2.0,
+        period=10.0,  #decide when to switch to active state
         actions=[EmitEvent(event=ChangeState(
             lifecycle_node_matcher=lambda action: action is fusioncore_node,
             transition_id=Transition.TRANSITION_CONFIGURE,
@@ -85,8 +85,8 @@ def generate_launch_description():
     # Analysis
     # -------------------------------------------------------------------------
     start_analysis = Node(
-        package="fusioncore_ros",
-        executable="fusioncore_analysis_node.py",
+        package="fusioncore_analysis",
+        executable="fusioncore_analysis_node",
         name="fusioncore_analysis",
         output="screen",
         parameters=[
@@ -118,7 +118,7 @@ def generate_launch_description():
             "/ona2/sensors/imu_front/imu_uncalib:=/imu/data",
             # "/fix:=/gnss/fix",
             "--rate", "1.0",
-            "--start-offset", "22.0",
+            "--start-offset", "25.0",
         ],
         output="screen",
     )
