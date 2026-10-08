@@ -1556,7 +1556,7 @@ private:
           for (const auto& s : sensors_expected_)
             if (!sensors_received_.count(s)) missing.insert(s);
           RCLCPP_WARN(get_logger(),
-            "Sensor wait timed out after %.1fs. Missing: [%s]. Starting anyway.",
+            "Sensor wait timed out after %.1fs. Missing: [%s]. Continuing startup checks.",
             sensor_wait_timeout_, format_sensor_set(missing).c_str());
         } else {
           RCLCPP_INFO(get_logger(),
@@ -1566,10 +1566,14 @@ private:
         sensor_wait_done_ = true;
       }
 
-      // The all-sensors gate already spent this timeout if it completed without
-      // a heading; don't wait through a second full timeout here.
-      if (!heading_topic_.empty() && !initial_gnss_heading_yaw_ &&
-          !(wait_for_all_sensors_ && sensor_wait_done_)) {
+      if (!heading_topic_.empty() && !initial_gnss_heading_yaw_) {
+        if (wait_for_all_sensors_) {
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Filter initialization blocked: waiting for a valid first heading on %s.",
+            heading_topic_.c_str());
+          return;
+        }
+
         if (!heading_wait_started_) {
           heading_wait_start_ = std::chrono::steady_clock::now();
           heading_wait_started_ = true;
