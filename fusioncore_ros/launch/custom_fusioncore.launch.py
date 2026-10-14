@@ -26,7 +26,7 @@ def generate_launch_description():
     )
     fusioncore_config = LaunchConfiguration("fusioncore_config")
     bag = LaunchConfiguration("bag")
-    analysis_output = LaunchConfiguration("analysis_output")
+    output_dir = LaunchConfiguration("output_dir")
 
     # -------------------------------------------------------------------------
     # FusionCore
@@ -91,7 +91,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "output_dir": analysis_output,
+                "output_dir": output_dir,
                 "idle_timeout_sec": 0.0,
             }
         ],
@@ -118,7 +118,7 @@ def generate_launch_description():
             "/ona2/sensors/imu_front/imu_uncalib:=/imu/data",
             # "/fix:=/gnss/fix",
             "--rate", "1.0",
-            "--start-offset", "25.0",
+            "--start-offset", "0.0",
         ],
         output="screen",
     )
@@ -144,11 +144,8 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            "analysis_output",
-            default_value=os.path.join(
-                os.path.expanduser("~"),
-                "fusioncore_analysis"
-            ),
+            "output_dir",
+            default_value=os.path.join(package_share, "fusioncore_analysis"),
             description="Root directory for timestamped analysis results",
         ),
 
