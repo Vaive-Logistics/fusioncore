@@ -359,7 +359,7 @@ fusioncore:
     # DifferentialDrive: zeros VY each predict step (tighter for diff-drive, skid-steer)
     # Ackermann: same lateral constraint with wheelbase stored for future extensions
     motion_model: "DifferentialDrive"
-    motion_model_params.wheelbase: 1.05   # meters: used by Ackermann model only
+    motion_model_params.wheelbase: 1.5   # meters: used by Ackermann model only
 
     # ── Sensor wait ───────────────────────────────────────────────────────────
     # Hold filter initialization until all configured sensors have published at least once.
